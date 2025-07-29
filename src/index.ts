@@ -1,3 +1,3 @@
-import { getAccessTokenPrompt } from './calendar/index.js';
+import { authorizeAndListEvents } from './calendar/index.js';
 
-getAccessTokenPrompt();
+authorizeAndListEvents();
