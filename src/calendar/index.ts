@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import readline from 'readline';
 import fs from 'fs';
 import path from 'path';
+import process from 'process';
 import { fileURLToPath } from 'url';
 
 dotenv.config();
@@ -13,7 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Ensure we store the token outside the build dir
-const TOKEN_PATH = path.resolve(__dirname, '../auth/token.json');
+const TOKEN_PATH = path.resolve(process.cwd(), 'src/auth/token.json');
 
 const oAuth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
