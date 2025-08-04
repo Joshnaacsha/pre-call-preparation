@@ -1,10 +1,11 @@
 import { authorizeAndListEvents } from './calendar/authorize.js';
 import { embedAndStoreAllEvents } from './embeddings/embedAndStore.js';
 import { searchPreviousMeetings } from './calendar/searchPreviousMeetings.js';
+import { prepareTavilyInputAgent } from './agents/prepareTavilyInputAgent.js'; // ✅ NEW
 import type { GraphState, RetrievedMeeting } from './graph/graphState.js';
 
 async function main() {
-  const state: GraphState = await authorizeAndListEvents();
+  let state: GraphState = await authorizeAndListEvents(); // 🔁 Changed from const to let
   console.log('📅 Events fetched and stored in state.');
 
   await embedAndStoreAllEvents(state);
@@ -14,10 +15,8 @@ async function main() {
 
   for (const event of state.calendarEvents) {
     const projectName = event.summary;
+    const results = await searchPreviousMeetings(projectName, event.startTime);
 
-const results = await searchPreviousMeetings(projectName, event.startTime);
-
-    // Convert documents to RetrievedMeeting[]
     const converted: RetrievedMeeting[] = results.map((doc) => {
       const { metadata, pageContent } = doc;
       return {
@@ -31,7 +30,6 @@ const results = await searchPreviousMeetings(projectName, event.startTime);
 
     previousMeetingsByProject[projectName] = converted;
 
-    // 🔍 Log each result
     console.log(`📂 Previous meetings for "${projectName}":`);
     for (const meeting of converted) {
       console.log({
@@ -46,7 +44,9 @@ const results = await searchPreviousMeetings(projectName, event.startTime);
 
   console.log('📚 Retrieved related meetings and updated state.');
 
-  // await agent.prepareTavilyInput(state);
+  // ✅ CALL THE AGENT
+  state = await prepareTavilyInputAgent(state);
+  console.log('🌐 External research query prepared and stored in state.');
 }
 
 main().catch((err) => {
