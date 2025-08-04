@@ -17,15 +17,13 @@ export async function listUpcomingEvents(auth: OAuth2Client): Promise<GraphState
   if (!events || events.length === 0) {
     console.log('No upcoming events found.');
     return {
-  calendarEvents: [],
-  externalResearch: {
-    searchQuery: '', // or set this later using another agent
-    companyNews: '',
-    contactUpdates: '',
-  },
-};
-
-
+      calendarEvents: [],
+      externalResearch: {
+        searchQuery: '',
+        companyNews: '',
+        contactUpdates: '',
+      },
+    };
   }
 
   const structuredEvents: CalendarEvent[] = events.map(event => ({
@@ -38,13 +36,13 @@ export async function listUpcomingEvents(auth: OAuth2Client): Promise<GraphState
 
   console.log('📅 Structured Events:\n', JSON.stringify(structuredEvents, null, 2));
 
- return {
-  calendarEvents: [],
-  externalResearch: {
-    searchQuery: '', // or set this later using another agent
-    companyNews: '',
-    contactUpdates: '',
-  },
-};
-
+  // ✅ FIX: Return the actual structuredEvents instead of empty array
+  return {
+    calendarEvents: structuredEvents, // <-- This was the bug!
+    externalResearch: {
+      searchQuery: '',
+      companyNews: '',
+      contactUpdates: '',
+    },
+  };
 }

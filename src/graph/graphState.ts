@@ -25,5 +25,5 @@ export interface GraphState {
   previousMeetingsByProject?: Record<string, RetrievedMeeting[]>;
   projectNotesFromDB?: Record<string, string[]>;
   externalResearch?: ExternalResearchResult;
-  summary?: string;
+  summary?: string; // ✅ Added summary field
 }

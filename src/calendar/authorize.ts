@@ -64,15 +64,14 @@ async function getAccessTokenPrompt(): Promise<GraphState> {
     return await listUpcomingEvents(oAuth2Client);
   } catch (err) {
     console.error('❌ Error retrieving access token', err);
-  return {
-  calendarEvents: [],
-  externalResearch: {
-    searchQuery: '', // or set this later using another agent
-    companyNews: '',
-    contactUpdates: '',
-  },
-};
-
-
+    // Return empty state on error
+    return {
+      calendarEvents: [],
+      externalResearch: {
+        searchQuery: '',
+        companyNews: '',
+        contactUpdates: '',
+      },
+    };
   }
 }
