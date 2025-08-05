@@ -48,29 +48,66 @@ export async function prepareTavilyInputAgent(state: GraphState): Promise<GraphS
     };
   }
 
-  // Extract project name by removing things in parentheses (e.g. "(5th meeting)")
-  const projectName = recentEvent.summary.replace(/\(.*?\)/g, '').trim();
+  // Use the full summary as the project name for better matching
+  const projectName = recentEvent.summary;
+  
+  // Also try with cleaned version as fallback
+  const cleanedProjectName = recentEvent.summary.replace(/\s*\(.*?\)\s*/g, '').trim();
 
-  // Safely access previous meetings
-  const previousMeetings: RetrievedMeeting[] =
-    state.previousMeetingsByProject?.[projectName] || [];
+  // Try to find previous meetings with exact match first, then cleaned version
+  let previousMeetings: RetrievedMeeting[] = 
+    state.previousMeetingsByProject?.[projectName] || 
+    state.previousMeetingsByProject?.[cleanedProjectName] || 
+    [];
 
+  // Debug logging
+  console.log(`🔍 DEBUG - Project extraction:`, {
+    originalSummary: recentEvent.summary,
+    projectName: projectName,
+    cleanedProjectName: cleanedProjectName,
+    availableProjects: Object.keys(state.previousMeetingsByProject || {}),
+    foundPreviousMeetings: previousMeetings.length
+  });
+
+  // Create a fresh, isolated prompt with explicit context boundaries
   const prompt = `
 You are an AI assistant helping a sales team prepare for external research.
-Given the following calendar event and previous meeting notes, create a short, specific search query suitable for a tool like Tavily.
+This is a NEW, INDEPENDENT request. Do not use any context from previous requests or conversations.
+
+IMPORTANT: Base your search query ONLY on the information provided below.
+
+CURRENT PROJECT: ${projectName}
+CURRENT MEETING: ${recentEvent.summary}
+
+Given ONLY the following calendar event and previous meeting notes, create a short, specific search query suitable for a tool like Tavily.
+
+Guidelines for search query creation:
+- If the meeting title contains "Ford", create queries about Ford Motor Company
+- If the meeting title contains "Meta", "Facebook", create queries about Meta/Facebook
+- If the meeting title contains "Google", "GCP", create queries about Google Cloud Platform
+- Focus on the actual company/technology mentioned in the meeting title
+- Include relevant technical terms from the meeting description if available
 
 Return only JSON in the format:
 {
   "searchQuery": "..."
 }
 
-Project Summary: ${recentEvent.summary}
+Current Meeting Details:
+- Title: ${recentEvent.summary}
+- Description: ${recentEvent.description || 'No description provided.'}
+- Attendees: ${recentEvent.attendees?.join(', ') || 'No attendees listed'}
 
-Description:
-${recentEvent.description || 'No description provided.'}
+Previous Meeting Notes for THIS PROJECT ONLY:
+${previousMeetings.length > 0 
+  ? previousMeetings.map((m, index) => 
+      `Meeting ${index + 1} (${m.metadata.summary}):
+      ${m.pageContent}`
+    ).join('\n\n')
+  : 'No past meetings found for this project.'
+}
 
-Previous Meeting Notes:
-${previousMeetings.map((m) => m.pageContent).join('\n\n') || 'No past meetings.'}
+Remember: Create a search query that is relevant to the CURRENT project "${projectName}" only.
 `;
 
   try {
@@ -85,6 +122,12 @@ ${previousMeetings.map((m) => m.pageContent).join('\n\n') || 'No past meetings.'
 
     const searchQuery = parsed.searchQuery || '';
     console.log(`🔍 Generated search query: "${searchQuery}"`);
+
+    // Validate that the search query is relevant to the current meeting
+    const isQueryRelevant = validateSearchQuery(searchQuery, recentEvent.summary);
+    if (!isQueryRelevant) {
+      console.warn(`⚠️ Generated query "${searchQuery}" may not be relevant to "${recentEvent.summary}"`);
+    }
 
     // Now perform the actual Tavily search
     const searchResults = await performTavilySearch(searchQuery);
@@ -111,6 +154,35 @@ ${previousMeetings.map((m) => m.pageContent).join('\n\n') || 'No past meetings.'
       },
     };
   }
+}
+
+// Function to validate if search query is relevant to the meeting
+function validateSearchQuery(searchQuery: string, meetingSummary: string): boolean {
+  const queryLower = searchQuery.toLowerCase();
+  const summaryLower = meetingSummary.toLowerCase();
+  
+  // Extract key terms from meeting summary
+  const keyTerms = [
+    'ford', 'meta', 'facebook', 'google', 'gcp', 'aws', 'azure', 'cloud',
+    'sap', 'hana', 'ecc', 's4hana', 'bigquery', 'migration'
+  ];
+  
+  // Check if any key terms from summary appear in query
+  for (const term of keyTerms) {
+    if (summaryLower.includes(term) && queryLower.includes(term)) {
+      return true;
+    }
+  }
+  
+  // Additional validation: check for obvious mismatches
+  if (summaryLower.includes('ford') && queryLower.includes('meta')) {
+    return false;
+  }
+  if (summaryLower.includes('meta') && queryLower.includes('ford')) {
+    return false;
+  }
+  
+  return true; // Default to true if no obvious mismatch
 }
 
 // Function to perform actual Tavily search
@@ -181,14 +253,16 @@ async function processSearchResults(
     };
   }
 
+  // Create a fresh prompt for processing results
   const prompt = `
 You are an AI assistant analyzing search results for a sales team preparing for a meeting.
+This is a NEW, INDEPENDENT analysis. Do not use context from previous analyses.
 
-Based on the following search results, extract and summarize:
-1. Recent company news or developments relevant to the project
+CURRENT PROJECT: ${projectName}
+
+Based ONLY on the following search results, extract and summarize:
+1. Recent company news or developments relevant to the project "${projectName}"
 2. Any important updates about key contacts or stakeholders
-
-Project: ${projectName}
 
 Search Results:
 ${results.map((result, index) => 
@@ -204,6 +278,8 @@ Return only JSON in this format:
   "companyNews": "Brief summary of relevant company news and developments",
   "contactUpdates": "Brief summary of any contact or stakeholder updates"
 }
+
+Focus only on information relevant to "${projectName}".
 `;
 
   try {
@@ -217,8 +293,8 @@ Return only JSON in this format:
     );
 
     console.log('📊 Processed search results:');
-    console.log('🏢 Company News:', parsed.companyNews);
-    console.log('👥 Contact Updates:', parsed.contactUpdates);
+    console.log('🏢 Company News:', parsed.companyNews?.slice(0, 100) + '...');
+    console.log('👥 Contact Updates:', parsed.contactUpdates?.slice(0, 100) + '...');
 
     return {
       companyNews: parsed.companyNews || 'No relevant company news found.',

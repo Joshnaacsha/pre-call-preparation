@@ -3,11 +3,18 @@ import { embedAndStoreAllEvents } from './embeddings/embedAndStore.js';
 import { searchPreviousMeetings } from './calendar/searchPreviousMeetings.js';
 import { prepareTavilyInputAgent } from './agents/tavilySearchAgent.js';
 import { generateMeetingSummary } from './agents/summaryGenarationAgent.js';
+import { generatePdfAndSendEmail } from './agents/pdfEmailAgent.js';
+import { hasPdfBeenGenerated, markPdfAsGenerated } from './calendar/listEvents.js';
 import type { GraphState, RetrievedMeeting } from './graph/graphState.js';
 import fs from 'fs';
 import path from 'path';
 
 async function main() {
+  console.log('\n🚀 Starting Cprime AI Pre-Call Pipeline...');
+  console.log('=' .repeat(60));
+  console.log('🕐 Scanning for client meetings in the next 3 hours...\n');
+
+  // Step 1: Get filtered calendar events (only next 3 hours, client meetings)
   let state: GraphState = await authorizeAndListEvents();
   
   // 🔍 DEBUG: Check what we got from authorize
@@ -15,118 +22,257 @@ async function main() {
     hasCalendarEvents: !!state.calendarEvents,
     eventsLength: state.calendarEvents?.length || 0,
     stateKeys: Object.keys(state),
-    firstEvent: state.calendarEvents?.[0]?.summary || 'No first event'
+    firstEvent: state.calendarEvents?.[0]?.summary || 'No events found'
   });
-  
-  console.log('📅 Events fetched and stored in state.');
 
-  // 🔍 DEBUG: Check if calendarEvents exists before embedding
+  // Check if any client meetings found in next 3 hours
   if (!state.calendarEvents || state.calendarEvents.length === 0) {
-    console.error('❌ No calendar events found after authorization!');
+    console.log('✅ No client meetings found in the next 3 hours.');
+    console.log('   - All existing meetings may already have PDFs generated');
+    console.log('   - Or no meetings match client/external attendee criteria');
+    console.log('   - Pipeline completed successfully with no work needed.\n');
     return;
   }
 
+  console.log(`📅 Found ${state.calendarEvents.length} client meeting(s) requiring processing:`);
+  state.calendarEvents.forEach((event, index) => {
+    const timeUntil = getTimeUntilMeeting(event.startTime);
+    const urgencyFlag = getUrgencyFlag(event.startTime);
+    console.log(`   ${index + 1}. ${urgencyFlag}${event.summary} - ${timeUntil}`);
+  });
+  console.log('');
+
+  // Step 2: Embed and store all events (now includes automatic duplicate checking)
   await embedAndStoreAllEvents(state);
-  console.log('✅ All events embedded and stored in Supabase.');
+  console.log('');
 
-  const previousMeetingsByProject: Record<string, RetrievedMeeting[]> = {};
+  // Step 3: Process each meeting individually
+  console.log('🔄 Processing meetings individually...');
+  console.log('-' .repeat(40));
 
-  // 🔍 DEBUG: Check calendarEvents before the loop
-  console.log('🔍 Debug - About to iterate over events:', state.calendarEvents?.length || 0);
+  for (let i = 0; i < state.calendarEvents.length; i++) {
+    const currentEvent = state.calendarEvents[i];
+    const eventId = (state as any).clientEventIds?.[i];
+    
+    console.log(`\n📋 Processing Meeting ${i + 1}/${state.calendarEvents.length}:`);
+    console.log(`   Title: ${currentEvent.summary}`);
+    console.log(`   Time: ${new Date(currentEvent.startTime).toLocaleString()}`);
+    console.log(`   Attendees: ${currentEvent.attendees.join(', ')}`);
 
-  for (const event of state.calendarEvents) {
-    if (!event || !event.summary) {
-      console.warn('⚠️ Skipping invalid event:', event);
+    // Check if PDF already exists for this meeting
+    if (hasPdfBeenGenerated(currentEvent, eventId)) {
+      console.log(`   ⏭️  PDF already exists - skipping this meeting`);
       continue;
     }
 
-    const projectName = event.summary;
-    const results = await searchPreviousMeetings(projectName, event.startTime);
-
-    const converted: RetrievedMeeting[] = results.map((doc) => {
-      const { metadata, pageContent } = doc;
-      return {
-        metadata: {
-          summary: metadata.summary ?? '',
-          startTime: metadata.startTime ?? '',
+    try {
+      // Create individual state for this meeting
+      const individualMeetingState: GraphState = {
+        calendarEvents: [currentEvent],
+        clientEventIds: eventId ? [eventId] : undefined,
+        externalResearch: {
+          searchQuery: '',
+          companyNews: '',
+          contactUpdates: '',
         },
-        pageContent,
       };
-    });
 
-    previousMeetingsByProject[projectName] = converted;
-
-    console.log(`📂 Previous meetings for "${projectName}":`);
-    for (const meeting of converted) {
-      console.log({
-        summary: meeting.metadata.summary,
-        startTime: meeting.metadata.startTime,
-        snippet: meeting.pageContent.slice(0, 200) + '...',
+      // Step 3a: Search for previous meetings for this specific event
+      console.log(`   🔍 Searching previous meetings for "${currentEvent.summary}"...`);
+      const results = await searchPreviousMeetings(currentEvent.summary, currentEvent.startTime);
+      
+      const convertedMeetings: RetrievedMeeting[] = results.map((doc) => {
+        const { metadata, pageContent } = doc;
+        return {
+          metadata: {
+            summary: metadata.summary ?? '',
+            startTime: metadata.startTime ?? '',
+          },
+          pageContent,
+        };
       });
+
+      individualMeetingState.previousMeetingsByProject = {
+        [currentEvent.summary]: convertedMeetings
+      };
+
+      console.log(`   📚 Found ${convertedMeetings.length} related previous meetings`);
+      
+      // Step 3b: External research for this meeting
+      console.log(`   🌐 Conducting external research...`);
+      try {
+        const researchedState = await prepareTavilyInputAgent(individualMeetingState);
+        individualMeetingState.externalResearch = researchedState.externalResearch;
+        console.log(`   ✅ External research completed`);
+        
+        // Show brief research summary
+        if (researchedState.externalResearch?.searchQuery) {
+          console.log(`      🔍 Search: ${researchedState.externalResearch.searchQuery}`);
+          const newsLength = researchedState.externalResearch.companyNews?.length || 0;
+          const contactLength = researchedState.externalResearch.contactUpdates?.length || 0;
+          console.log(`      📊 Data: ${newsLength} chars news, ${contactLength} chars contacts`);
+        }
+      } catch (error) {
+        console.error(`   ⚠️  External research failed: ${error}`);
+        // Continue without external research
+      }
+
+      // Step 3c: Generate meeting summary
+      console.log(`   🤖 Generating AI meeting summary...`);
+      try {
+        const summaryState = await generateMeetingSummary(individualMeetingState);
+        individualMeetingState.summary = summaryState.summary;
+        console.log(`   ✅ Summary generated (${summaryState.summary?.length || 0} characters)`);
+      } catch (error) {
+        console.error(`   ❌ Summary generation failed:`, error);
+        continue; // Skip to next meeting if summary fails
+      }
+
+      // Step 3d: Save individual summary to file
+      const summaryFileName = `briefing-${currentEvent.summary.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.md`;
+      const summaryPath = path.join(process.cwd(), 'summaries', summaryFileName);
+      
+      // Create summaries directory if it doesn't exist
+      const summariesDir = path.join(process.cwd(), 'summaries');
+      if (!fs.existsSync(summariesDir)) {
+        fs.mkdirSync(summariesDir, { recursive: true });
+      }
+      
+      // Write summary to file
+      if (individualMeetingState.summary) {
+        fs.writeFileSync(summaryPath, individualMeetingState.summary);
+        console.log(`   💾 Summary saved: ${summaryFileName}`);
+      }
+
+      // Step 3e: Generate PDF and send email
+      console.log(`   📧 Generating PDF and sending email...`);
+      try {
+        const finalState = await generatePdfAndSendEmail(individualMeetingState);
+        
+        if (finalState.pdfPath && finalState.pdfPath !== 'already-exists') {
+          // Mark PDF as generated for deduplication
+          markPdfAsGenerated(currentEvent, finalState.pdfPath, eventId);
+          
+          console.log(`   ✅ PDF generated: ${path.basename(finalState.pdfPath)}`);
+          
+          // Check if email was sent
+          const cprimeAttendee = currentEvent.attendees.find(email => 
+            email.toLowerCase().includes('licet.ac.in') || 
+            email.toLowerCase().includes('@cprime.com')
+          );
+          
+          if (cprimeAttendee) {
+            console.log(`   📧 Email sent to: ${cprimeAttendee}`);
+          } else {
+            console.log(`   ⚠️  PDF saved but no internal attendee found for email`);
+          }
+        } else {
+          console.log(`   ⚠️  PDF generation completed but no path returned`);
+        }
+        
+      } catch (error) {
+        console.error(`   ❌ PDF/Email generation failed:`, error);
+        // Continue with next meeting
+      }
+
+      console.log(`   ✅ Meeting "${currentEvent.summary}" processed successfully`);
+
+    } catch (error) {
+      console.error(`   ❌ Error processing meeting "${currentEvent.summary}":`, error);
+      // Continue with next meeting even if this one fails
+    }
+
+    // Add small delay between meetings to avoid overwhelming services
+    if (i < state.calendarEvents.length - 1) {
+      console.log(`   ⏳ Waiting 2 seconds before next meeting...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
 
-  state.previousMeetingsByProject = previousMeetingsByProject;
-
-  console.log('📚 Retrieved related meetings and updated state.');
-
-  // 🔍 DEBUG: Check state before calling prepareTavilyInputAgent
-  console.log('🔍 Debug - State before prepareTavilyInputAgent:', {
-    hasCalendarEvents: !!state.calendarEvents,
-    eventsLength: state.calendarEvents?.length || 0,
-    hasPreviousMeetings: !!state.previousMeetingsByProject,
-    stateKeys: Object.keys(state)
+  // Final summary
+  console.log('\n🎉 PIPELINE COMPLETED!');
+  console.log('=' .repeat(40));
+  console.log(`📊 Results Summary:`);
+  console.log(`   - Total client meetings found: ${state.calendarEvents.length}`);
+  console.log(`   - Processing completed at: ${new Date().toLocaleString()}`);
+  console.log(`   - Check your email and summaries folder for briefing materials`);
+  console.log(`   - PDFs are tracked to prevent duplicate generation`);
+  console.log(`   - Embeddings are now tracked to prevent duplicates`);
+  
+  // Show urgency summary
+  const urgentMeetings = state.calendarEvents.filter(event => {
+    const diffMs = new Date(event.startTime).getTime() - new Date().getTime();
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    return diffHours < 1;
   });
-
-  // ✅ EXTERNAL RESEARCH
-  try {
-    state = await prepareTavilyInputAgent(state);
-    console.log('🌐 External research completed and stored in state.');
-    
-    // 🔍 DEBUG: Show external research results
-    console.log('🎯 External Research Results:');
-    console.log('🔍 Search Query:', state.externalResearch?.searchQuery || 'None');
-    console.log('🏢 Company News:', state.externalResearch?.companyNews?.slice(0, 200) + '...' || 'None');
-    console.log('👥 Contact Updates:', state.externalResearch?.contactUpdates || 'None');
-  } catch (error) {
-    console.error('❌ Error in prepareTavilyInputAgent:', error);
+  
+  if (urgentMeetings.length > 0) {
+    console.log(`\n🚨 URGENT MEETINGS (< 1 hour):`);
+    urgentMeetings.forEach(event => {
+      const timeUntil = getTimeUntilMeeting(event.startTime);
+      console.log(`   - ${event.summary} - ${timeUntil}`);
+    });
   }
 
-  // ✅ GENERATE COMPREHENSIVE SUMMARY
-  try {
-    console.log('\n🎯 Starting comprehensive summary generation...');
-    state = await generateMeetingSummary(state);
-    console.log('📋 Meeting summary generated successfully!');
-    
-    // Save the summary to a file for easy access
-    const summaryFileName = `meeting-summary-${new Date().toISOString().split('T')[0]}.md`;
-    const summaryPath = path.join(process.cwd(), 'summaries', summaryFileName);
-    
-    // Create summaries directory if it doesn't exist
-    const summariesDir = path.join(process.cwd(), 'summaries');
-    if (!fs.existsSync(summariesDir)) {
-      fs.mkdirSync(summariesDir, { recursive: true });
-    }
-    
-    // Write summary to file
-    fs.writeFileSync(summaryPath, state.summary || 'No summary generated');
-    console.log(`💾 Summary saved to: ${summaryPath}`);
-    
-    // Display key highlights
-    console.log('\n🌟 SUMMARY HIGHLIGHTS:');
-    console.log('📊 Meeting:', state.calendarEvents[0].summary);
-    console.log('📅 Date:', new Date(state.calendarEvents[0].startTime).toLocaleDateString());
-    console.log('📍 Location:', state.calendarEvents[0].location || 'Not specified');
-    console.log('📄 Full briefing document saved to summaries folder');
-    
-  } catch (error) {
-    console.error('❌ Error generating meeting summary:', error);
-  }
-
-  console.log('\n🎉 Pre-call preparation pipeline completed successfully!');
-  console.log('📋 Check the summaries folder for your detailed briefing document.');
+  console.log('\n✅ Pre-call preparation pipeline completed successfully!');
 }
 
+/**
+ * Helper function to calculate time until meeting
+ */
+function getTimeUntilMeeting(startTime: string): string {
+  const now = new Date();
+  const meetingTime = new Date(startTime);
+  const diffMs = meetingTime.getTime() - now.getTime();
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+  
+  if (diffMs < 0) {
+    return 'Already started';
+  } else if (diffHours > 0) {
+    return `in ${diffHours}h ${diffMinutes}m`;
+  } else {
+    return `in ${diffMinutes}m`;
+  }
+}
+
+/**
+ * Helper function to get urgency flag for display
+ */
+function getUrgencyFlag(startTime: string): string {
+  const now = new Date();
+  const meetingTime = new Date(startTime);
+  const diffMs = meetingTime.getTime() - now.getTime();
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  
+  if (diffHours < 1) {
+    return '🚨 ';
+  } else if (diffHours <= 2) {
+    return '⏰ ';
+  }
+  return '';
+}
+
+/**
+ * Scheduled runner function that can be called periodically
+ */
+export async function runScheduledPipeline(): Promise<void> {
+  const startTime = new Date();
+  console.log(`\n⏰ Scheduled pipeline run started at: ${startTime.toLocaleString()}`);
+  
+  try {
+    await main();
+  } catch (error) {
+    console.error('❌ Scheduled pipeline run failed:', error);
+  }
+  
+  const endTime = new Date();
+  const duration = Math.round((endTime.getTime() - startTime.getTime()) / 1000);
+  console.log(`⏱️  Pipeline completed in ${duration} seconds`);
+}
+
+// Run the main pipeline
 main().catch((err) => {
   console.error('❌ Error in pipeline:', err);
+  process.exit(1);
 });

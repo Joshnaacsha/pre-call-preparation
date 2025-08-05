@@ -1,3 +1,4 @@
+// Updated interfaces
 export interface CalendarEvent {
   startTime: string;
   summary: string;
@@ -22,8 +23,9 @@ export interface ExternalResearchResult {
 
 export interface GraphState {
   calendarEvents: CalendarEvent[];
+  clientEventIds?: string[]; // Added for PDF tracking
   previousMeetingsByProject?: Record<string, RetrievedMeeting[]>;
   projectNotesFromDB?: Record<string, string[]>;
   externalResearch?: ExternalResearchResult;
-  summary?: string; // ✅ Added summary field
+  summary?: string;
 }
