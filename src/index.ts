@@ -2,6 +2,7 @@ import { authorizeAndListEvents } from './calendar/authorize.js';
 import { embedAndStoreAllEvents } from './embeddings/embedAndStore.js';
 import { searchPreviousMeetings } from './calendar/searchPreviousMeetings.js';
 import { prepareTavilyInputAgent } from './agents/tavilySearchAgent.js';
+import { conductLinkedInResearch } from './agents/linkedinAgent.js';
 import { generateMeetingSummary } from './agents/summaryGenarationAgent.js';
 import { generatePdfAndSendEmail } from './agents/pdfEmailAgent.js';
 import { hasPdfBeenGenerated, markPdfAsGenerated } from './calendar/listEvents.js';
@@ -98,37 +99,66 @@ async function main() {
 
       console.log(`   📚 Found ${convertedMeetings.length} related previous meetings`);
       
-      // Step 3b: External research for this meeting
-      console.log(`   🌐 Conducting external research...`);
+      // Step 3b: External research for this meeting (Tavily search)
+      console.log(`   🌐 Conducting external company research...`);
       try {
         const researchedState = await prepareTavilyInputAgent(individualMeetingState);
         individualMeetingState.externalResearch = researchedState.externalResearch;
-        console.log(`   ✅ External research completed`);
+        console.log(`   ✅ External company research completed`);
         
         // Show brief research summary
         if (researchedState.externalResearch?.searchQuery) {
           console.log(`      🔍 Search: ${researchedState.externalResearch.searchQuery}`);
           const newsLength = researchedState.externalResearch.companyNews?.length || 0;
-          const contactLength = researchedState.externalResearch.contactUpdates?.length || 0;
-          console.log(`      📊 Data: ${newsLength} chars news, ${contactLength} chars contacts`);
+          console.log(`      📊 Company Data: ${newsLength} characters`);
         }
       } catch (error) {
-        console.error(`   ⚠️  External research failed: ${error}`);
+        console.error(`   ⚠️  External company research failed: ${error}`);
         // Continue without external research
       }
 
-      // Step 3c: Generate meeting summary
+     // Step 3c: LinkedIn/Professional Research for attendees
+      console.log(`   🔗 Conducting attendee profile research...`);
+      try {
+        const linkedinState = await conductLinkedInResearch(individualMeetingState);
+        // Merge the contactUpdates from LinkedIn research with existing externalResearch
+        // Ensure all required fields are present
+        individualMeetingState.externalResearch = {
+          searchQuery: linkedinState.externalResearch?.searchQuery || individualMeetingState.externalResearch?.searchQuery || '',
+          companyNews: linkedinState.externalResearch?.companyNews || individualMeetingState.externalResearch?.companyNews || '',
+          contactUpdates: linkedinState.externalResearch?.contactUpdates || individualMeetingState.externalResearch?.contactUpdates || '',
+        };
+        console.log(`   ✅ Attendee profile research completed`);
+        
+        // Show brief LinkedIn research summary
+        const contactLength = linkedinState.externalResearch?.contactUpdates?.length || 0;
+        console.log(`      👥 Attendee Data: ${contactLength} characters`);
+      } catch (error) {
+        console.error(`   ⚠️  LinkedIn research failed: ${error}`);
+        // Continue without LinkedIn research
+      }
+      
+      // Step 3d: Generate meeting summary (now includes all research data)
       console.log(`   🤖 Generating AI meeting summary...`);
       try {
         const summaryState = await generateMeetingSummary(individualMeetingState);
         individualMeetingState.summary = summaryState.summary;
         console.log(`   ✅ Summary generated (${summaryState.summary?.length || 0} characters)`);
+        
+        // Show data sources used in summary
+        const hasCompanyNews = (individualMeetingState.externalResearch?.companyNews?.length || 0) > 50;
+        const hasAttendeeData = individualMeetingState.externalResearch?.contactUpdates && 
+          !individualMeetingState.externalResearch.contactUpdates.includes('skipped');
+        const hasPreviousMeetings = convertedMeetings.length > 0;
+        
+        console.log(`      📊 Data sources: Company news: ${hasCompanyNews ? 'Yes' : 'No'}, Attendee profiles: ${hasAttendeeData ? 'Yes' : 'No'}, Previous meetings: ${hasPreviousMeetings ? 'Yes' : 'No'}`);
+        
       } catch (error) {
         console.error(`   ❌ Summary generation failed:`, error);
         continue; // Skip to next meeting if summary fails
       }
 
-      // Step 3d: Save individual summary to file
+      // Step 3e: Save individual summary to file
       const summaryFileName = `briefing-${currentEvent.summary.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.md`;
       const summaryPath = path.join(process.cwd(), 'summaries', summaryFileName);
       
@@ -144,7 +174,7 @@ async function main() {
         console.log(`   💾 Summary saved: ${summaryFileName}`);
       }
 
-      // Step 3e: Generate PDF and send email
+      // Step 3f: Generate PDF and send email
       console.log(`   📧 Generating PDF and sending email...`);
       try {
         const finalState = await generatePdfAndSendEmail(individualMeetingState);
@@ -198,6 +228,7 @@ async function main() {
   console.log(`   - Check your email and summaries folder for briefing materials`);
   console.log(`   - PDFs are tracked to prevent duplicate generation`);
   console.log(`   - Embeddings are now tracked to prevent duplicates`);
+  console.log(`   - LinkedIn/Attendee research integrated into briefings`);
   
   // Show urgency summary
   const urgentMeetings = state.calendarEvents.filter(event => {
@@ -213,6 +244,12 @@ async function main() {
       console.log(`   - ${event.summary} - ${timeUntil}`);
     });
   }
+
+  // Show research summary
+  console.log(`\n📊 RESEARCH SUMMARY:`);
+  console.log(`   - Company research via Tavily: ${process.env.TAVILY_API_KEY ? 'Enabled' : 'Disabled'}`);
+  console.log(`   - Attendee profiles via OpenAI: ${process.env.OPENAI_API_KEY ? 'Enabled' : 'Disabled'}`);
+  console.log(`   - Meeting summaries via Gemini: ${process.env.GEMINI_API_KEY ? 'Enabled' : 'Disabled'}`);
 
   console.log('\n✅ Pre-call preparation pipeline completed successfully!');
 }

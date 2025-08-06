@@ -47,6 +47,7 @@ export async function generateMeetingSummary(state: GraphState): Promise<GraphSt
   const projectName = currentEvent.summary.replace(/\(.*?\)/g, '').trim();
   const previousMeetings = state.previousMeetingsByProject?.[currentEvent.summary] || [];
   const externalResearch = state.externalResearch;
+  const projectNotes = state.projectNotesFromDB?.[projectName] || [];
 
   console.log('📋 Generating concise meeting summary...');
 
@@ -62,34 +63,48 @@ SERVICES: ${COMPANY_METADATA.coreServices.join(' | ')}
 MEETING: ${currentEvent.summary}
 DATE: ${currentEvent.startTime}
 TYPE: ${meetingType}
+LOCATION: ${currentEvent.location || 'Not specified'}
+ATTENDEES: ${currentEvent.attendees.join(', ')}
 
 PREVIOUS MEETINGS: ${previousMeetings.length} meeting(s)
 ${previousMeetings.slice(0, 2).map(m => `• ${m.metadata.summary}: ${m.pageContent.slice(0, 200)}...`).join('\n')}
 
+PROJECT NOTES FROM DATABASE:
+${projectNotes.length > 0 ? projectNotes.map(note => `• ${note}`).join('\n') : 'No project notes found in database.'}
+
 EXTERNAL RESEARCH:
-${externalResearch?.companyNews || 'No external news found.'}
+Search Query: ${externalResearch?.searchQuery || 'No search conducted'}
+Company News: ${externalResearch?.companyNews || 'No external news found.'}
+
+PROFESSIONAL ATTENDEE INTELLIGENCE:
+${externalResearch?.contactUpdates || 'No attendee profile research conducted.'}
+
+CURRENT MEETING DESCRIPTION:
+${currentEvent.description || 'No meeting description provided.'}
 
 Return ONLY a JSON object with CONCISE content:
 {
   "meetingType": "${meetingType}",
-  "clientContext": "2-3 sentences: who they are, what they do, project context",
-  "pastEngagement": "1-2 sentences: key previous interactions summary",
-  "externalIntelligence": "1-2 sentences: relevant external news/insights",
+  "clientContext": "2-3 sentences: who they are, what they do, project context based on all available data",
+  "pastEngagement": "1-2 sentences: key previous interactions summary including project notes if available",
+  "externalIntelligence": "1-2 sentences: relevant external news/insights and key attendee insights from professional research",
   "talkingPoints": [
-    "3-4 specific, actionable talking points that connect our services to their needs"
+    "3-4 specific, actionable talking points that connect our services to their needs based on attendee profiles and context"
   ],
   "keyQuestions": [
-    "3-4 strategic questions to ask"  
+    "3-4 strategic questions to ask based on meeting history, attendee profiles, and context"  
   ],
   "risks": [
-    "2-3 key risks or concerns"
+    "2-3 key risks or concerns based on project history, attendee profiles, and external intelligence"
   ],
   "opportunities": [
-    "2-3 business opportunities"
+    "2-3 business opportunities based on all available context including attendee decision-making authority"
   ]
 }
 
 Keep ALL content brief and actionable. Focus on intelligence that drives conversation, not generic information.
+Use all available context: previous meetings, project notes, external research, attendee profiles, and current meeting details.
+Pay special attention to attendee insights for personalized approaches.
 `;
 
   try {
@@ -102,7 +117,7 @@ Keep ALL content brief and actionable. Focus on intelligence that drives convers
       raw.trim().replace(/^```json/, '').replace(/```$/, '')
     );
 
-    const formattedSummary = formatConciseSummary(parsed, currentEvent, projectName);
+    const formattedSummary = formatConciseSummary(parsed, currentEvent, projectName, state);
 
     console.log('✅ Concise meeting summary generated successfully');
     console.log('📄 Summary preview:');
@@ -115,7 +130,7 @@ Keep ALL content brief and actionable. Focus on intelligence that drives convers
   } catch (error) {
     console.error('❌ Error generating meeting summary:', error);
     
-    const fallbackSummary = generateFallbackSummary(currentEvent, previousMeetings, externalResearch);
+    const fallbackSummary = generateFallbackSummary(currentEvent, previousMeetings, externalResearch, state);
     
     return {
       ...state,
@@ -144,7 +159,8 @@ function determineMeetingType(event: CalendarEvent, previousMeetings: RetrievedM
 function formatConciseSummary(
   summary: MeetingSummary, 
   currentEvent: CalendarEvent, 
-  projectName: string
+  projectName: string,
+  state: GraphState
 ): string {
   const date = new Date(currentEvent.startTime).toLocaleDateString('en-US', {
     weekday: 'short',
@@ -154,7 +170,20 @@ function formatConciseSummary(
     minute: '2-digit'
   });
 
-  return `${summary.clientContext}
+  const previousMeetings = state.previousMeetingsByProject?.[currentEvent.summary] || [];
+  const projectNotes = state.projectNotesFromDB?.[projectName] || [];
+  const hasAttendeeResearch = state.externalResearch?.contactUpdates && 
+    state.externalResearch.contactUpdates !== 'No attendee profile research conducted.' &&
+    !state.externalResearch.contactUpdates.includes('skipped');
+
+  return `# PRE-CALL BRIEFING: ${currentEvent.summary}
+
+**Meeting:** ${date}  
+**Type:** ${summary.meetingType.toUpperCase()}  
+**Location:** ${currentEvent.location || 'Not specified'}  
+**Attendees:** ${currentEvent.attendees.join(', ')}
+
+---
 
 ## CLIENT CONTEXT
 ${summary.clientContext}
@@ -162,8 +191,17 @@ ${summary.clientContext}
 ## ENGAGEMENT HISTORY
 ${summary.pastEngagement}
 
+${previousMeetings.length > 0 ? `**Previous Meetings:** ${previousMeetings.length} meetings on record` : '**Previous Meetings:** First meeting with this client'}
+
+${projectNotes.length > 0 ? `**Project Notes:** ${projectNotes.length} notes from database` : ''}
+
 ## EXTERNAL INTELLIGENCE
 ${summary.externalIntelligence}
+
+${state.externalResearch?.searchQuery ? `**Research Query:** "${state.externalResearch.searchQuery}"` : ''}
+
+${hasAttendeeResearch ? '\n## ATTENDEE INTELLIGENCE' : ''}
+${hasAttendeeResearch ? state.externalResearch!.contactUpdates : ''}
 
 ---
 
@@ -187,29 +225,68 @@ ${summary.keyQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 **Services:** ${COMPANY_METADATA.coreServices.join(' | ')}  
 **Differentiators:** ${COMPANY_METADATA.keyDifferentiators.join(' • ')}
 
+## MEETING CONTEXT
+${currentEvent.description ? `**Meeting Description:** ${currentEvent.description}` : '**Meeting Description:** Not provided'}
+
 **Pre-Meeting Checklist:** Review action items • Prepare technical diagrams • Confirm attendees • Ready follow-up template
 
 ---
+
+**Data Sources:** ${previousMeetings.length} prev meetings • ${projectNotes.length} project notes • External research: ${state.externalResearch?.companyNews ? 'Yes' : 'No'} • Attendee profiles: ${hasAttendeeResearch ? 'Yes' : 'No'}
+
 *Generated ${new Date().toISOString().split('T')[0]} | Confidential*`;
 }
 
 function generateFallbackSummary(
   event: CalendarEvent, 
   previousMeetings: RetrievedMeeting[], 
-  externalResearch?: { searchQuery?: string; companyNews?: string; contactUpdates?: string }
+  externalResearch?: { searchQuery?: string; companyNews?: string; contactUpdates?: string },
+  state?: GraphState
 ): string {
-  return `${previousMeetings.length > 0 ? `Follow-up meeting (${previousMeetings.length} prior meetings)` : 'Initial client meeting'} regarding ${event.summary}.
+  const projectName = event.summary.replace(/\(.*?\)/g, '').trim();
+  const projectNotes = state?.projectNotesFromDB?.[projectName] || [];
+  const hasAttendeeResearch = externalResearch?.contactUpdates && 
+    externalResearch.contactUpdates !== 'No attendee profile research conducted.' &&
+    !externalResearch.contactUpdates.includes('skipped');
+
+  return `# PRE-CALL BRIEFING: ${event.summary}
+
+**Meeting:** ${new Date(event.startTime).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })}  
+**Type:** ${previousMeetings.length > 0 ? 'FOLLOW-UP' : 'DISCOVERY'}  
+**Location:** ${event.location || 'Not specified'}  
+**Attendees:** ${event.attendees.join(', ')}
+
+---
+
+## CONTEXT
+${previousMeetings.length > 0 ? `Follow-up meeting (${previousMeetings.length} prior meetings)` : 'Initial client meeting'} regarding ${event.summary}.
+
+${projectNotes.length > 0 ? `**Project Notes Available:** ${projectNotes.length} notes from database` : ''}
 
 ## INTELLIGENCE
 ${externalResearch?.companyNews || 'Limited external information available.'}
+${externalResearch?.searchQuery ? `**Search Conducted:** "${externalResearch.searchQuery}"` : ''}
+
+${hasAttendeeResearch ? '\n## ATTENDEE INTELLIGENCE' : ''}
+${hasAttendeeResearch ? externalResearch!.contactUpdates : ''}
 
 ## APPROACH
 • Understand client needs and current challenges
 • Present relevant Cprime solutions and case studies  
 • Establish clear next steps and follow-up actions
+${hasAttendeeResearch ? '• Leverage attendee profile insights for personalized approach' : ''}
 
 **Services:** ${COMPANY_METADATA.coreServices.join(' | ')}
 
+${event.description ? `## MEETING DESCRIPTION
+${event.description}` : ''}
+
 ---
-*Fallback summary - Limited data available*`;
+*Fallback summary - Limited data available | Generated ${new Date().toISOString().split('T')[0]}*`;
 }

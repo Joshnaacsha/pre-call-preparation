@@ -28,4 +28,5 @@ export interface GraphState {
   projectNotesFromDB?: Record<string, string[]>;
   externalResearch?: ExternalResearchResult;
   summary?: string;
+  pdfPath?: string; // For tracking generated PDF path
 }
