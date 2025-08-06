@@ -187,19 +187,54 @@ async function generatePdfFromSummary(summary: string, event: CalendarEvent): Pr
     await browser.close();
   }
 }
-
 function convertMarkdownToHtml(markdown: string, event: CalendarEvent): string {
-  // Convert markdown to HTML with professional styling
-  let html = markdown
+  // Remove content before "## CLIENT CONTEXT" to avoid duplication
+  const clientContextIndex = markdown.indexOf('## CLIENT CONTEXT');
+  let processedMarkdown = markdown;
+  
+  if (clientContextIndex !== -1) {
+    // Keep only the content from "## CLIENT CONTEXT" onwards
+    processedMarkdown = markdown.substring(clientContextIndex);
+  }
+  
+  // Convert markdown to HTML with professional styling - USE PROCESSED MARKDOWN
+  let html = processedMarkdown
     .replace(/^# (.*$)/gm, '<h1>$1</h1>')
     .replace(/^## (.*$)/gm, '<h2>$1</h2>')
     .replace(/^### (.*$)/gm, '<h3>$1</h3>')
-    .replace(/^\*\*(.*?)\*\*/gm, '<strong>$1</strong>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // Fixed: removed ^ anchor, made global
     .replace(/^\* (.*$)/gm, '<li>$1</li>')
     .replace(/^(\d+)\. (.*$)/gm, '<li>$1. $2</li>')
     .replace(/^---$/gm, '<hr>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>');
+    .replace(/\n\n/g, '</p><p>') // This creates paragraph breaks
+    .replace(/\n/g, '<br>'); // This converts single line breaks to <br>
+  
+  // Wrap the entire content in paragraph tags first
+  html = `<p>${html}</p>`;
+  
+  // Fix empty paragraphs and clean up formatting
+  html = html
+    .replace(/<p><\/p>/g, '') // Remove empty paragraphs
+    .replace(/<p>(<h[1-6]>)/g, '$1') // Remove <p> before headers
+    .replace(/(<\/h[1-6]>)<\/p>/g, '$1') // Remove </p> after headers
+    .replace(/<p>(<hr>)<\/p>/g, '$1') // Remove <p> around <hr>
+    .replace(/<p>(<li>.*?<\/li>)<\/p>/gs, '$1') // Remove <p> around list items
+    .replace(/<br>\s*(<\/p>)/g, '$1') // Remove <br> before closing </p>
+    .replace(/(<p>)\s*<br>/g, '$1') // Remove <br> after opening <p>
+    .replace(/<p>\s*<\/p>/g, ''); // Remove any remaining empty paragraphs
+  
+  // Wrap orphaned <li> elements in <ul> tags
+  html = html.replace(/(<li>.*?<\/li>)(?:\s*<li>.*?<\/li>)*/gs, (match) => {
+    return `<ul>${match}</ul>`;
+  });
+  
+  // Clean up any remaining formatting issues
+  html = html
+    .replace(/<\/ul>\s*<ul>/g, '') // Merge adjacent <ul> tags
+    .replace(/<br>\s*(<h[1-6]>)/g, '$1') // Remove <br> before headers
+    .replace(/(<\/h[1-6]>)\s*<br>/g, '$1') // Remove <br> after headers
+    .replace(/<br>\s*(<ul>)/g, '$1') // Remove <br> before lists
+    .replace(/(<\/ul>)\s*<br>/g, '$1'); // Remove <br> after lists
   
   // Get time until meeting for urgency context
   const now = new Date();
@@ -210,9 +245,9 @@ function convertMarkdownToHtml(markdown: string, event: CalendarEvent): string {
   
   let urgencyBadge = '';
   if (diffHours < 1) {
-    urgencyBadge = `<div style="background: #e74c3c; color: white; padding: 8px 16px; border-radius: 20px; display: inline-block; margin-bottom: 15px; font-size: 14px; font-weight: bold;">🚨 URGENT: Meeting in ${diffMinutes} minutes</div>`;
+    urgencyBadge = `<div style="background: #e74c3c; color: white; padding: 10px 18px; border-radius: 15px; display: inline-block; margin-bottom: 18px; font-size: 16px; font-weight: bold;">🚨 URGENT: Meeting in ${diffMinutes} minutes</div>`;
   } else if (diffHours <= 2) {
-    urgencyBadge = `<div style="background: #f39c12; color: white; padding: 8px 16px; border-radius: 20px; display: inline-block; margin-bottom: 15px; font-size: 14px; font-weight: bold;">⏰ Soon: Meeting in ${diffHours}h ${diffMinutes}m</div>`;
+    urgencyBadge = `<div style="background: #f39c12; color: white; padding: 10px 18px; border-radius: 15px; display: inline-block; margin-bottom: 18px; font-size: 16px; font-weight: bold;">⏰ Soon: Meeting in ${diffHours}h ${diffMinutes}m</div>`;
   }
   
   return `
@@ -228,47 +263,56 @@ function convertMarkdownToHtml(markdown: string, event: CalendarEvent): string {
           color: #333;
           max-width: 800px;
           margin: 0 auto;
-          padding: 20px;
+          padding: 22px;
           background: #fff;
+          font-size: 16px;
         }
         
         h1 {
           color: #2c5aa0;
-          border-bottom: 3px solid #2c5aa0;
+          border-bottom: 2px solid #2c5aa0;
           padding-bottom: 10px;
           font-size: 28px;
           margin-top: 0;
+          margin-bottom: 16px;
         }
         
         h2 {
           color: #34495e;
-          font-size: 20px;
-          margin-top: 30px;
-          margin-bottom: 15px;
-          border-left: 4px solid #3498db;
-          padding-left: 15px;
+          font-size: 22px;
+          margin-top: 20px;
+          margin-bottom: 12px;
+          border-left: 3px solid #3498db;
+          padding-left: 14px;
         }
         
         h3 {
           color: #2c3e50;
-          font-size: 16px;
-          margin-top: 25px;
+          font-size: 18px;
+          margin-top: 16px;
+          margin-bottom: 8px;
+          font-weight: 600;
         }
         
         p {
-          margin-bottom: 15px;
+          margin-bottom: 12px;
           text-align: justify;
+          line-height: 1.6;
+          font-size: 16px;
         }
         
         ul, ol {
-          margin-bottom: 20px;
-          padding-left: 30px;
+          margin-bottom: 12px;
+          margin-top: 6px;
+          padding-left: 28px;
         }
         
         li {
-          margin-bottom: 8px;
+          margin-bottom: 6px;
           list-style-type: none;
           position: relative;
+          line-height: 1.5;
+          font-size: 16px;
         }
         
         li:before {
@@ -276,12 +320,13 @@ function convertMarkdownToHtml(markdown: string, event: CalendarEvent): string {
           color: #3498db;
           position: absolute;
           left: -20px;
+          font-size: 14px;
         }
         
         hr {
           border: none;
-          border-top: 2px solid #ecf0f1;
-          margin: 30px 0;
+          border-top: 1px solid #ecf0f1;
+          margin: 18px 0;
         }
         
         strong {
@@ -293,8 +338,8 @@ function convertMarkdownToHtml(markdown: string, event: CalendarEvent): string {
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           color: white;
           padding: 20px;
-          border-radius: 8px;
-          margin-bottom: 30px;
+          border-radius: 6px;
+          margin-bottom: 25px;
           text-align: center;
         }
         
@@ -302,21 +347,23 @@ function convertMarkdownToHtml(markdown: string, event: CalendarEvent): string {
           color: white;
           border: none;
           margin: 0;
+          font-size: 26px;
         }
         
         .meeting-details {
           background: #f8f9fa;
-          padding: 15px;
-          border-radius: 5px;
+          padding: 16px 20px;
+          border-radius: 4px;
           margin-bottom: 20px;
-          border-left: 4px solid #28a745;
+          border-left: 3px solid #28a745;
+          font-size: 15px;
         }
         
         .cprime-logo {
           text-align: center;
-          margin-bottom: 30px;
+          margin-bottom: 25px;
           color: #2c5aa0;
-          font-size: 24px;
+          font-size: 20px;
           font-weight: bold;
         }
         
@@ -324,13 +371,45 @@ function convertMarkdownToHtml(markdown: string, event: CalendarEvent): string {
           text-align: center;
           color: #e74c3c;
           font-size: 12px;
-          margin-top: 30px;
+          margin-top: 25px;
           font-style: italic;
         }
         
+        .compact-section h2 {
+          margin-top: 18px;
+          margin-bottom: 10px;
+        }
+        
+        .compact-section h3 {
+          margin-top: 14px;
+          margin-bottom: 8px;
+        }
+        
+        .compact-section p {
+          margin-bottom: 10px;
+        }
+        
+        .compact-section ul {
+          margin-top: 6px;
+          margin-bottom: 10px;
+        }
+        
+        .compact-section li {
+          margin-bottom: 4px;
+          line-height: 1.5;
+        }
+        
         @media print {
-          body { margin: 0; }
-          .page-break { page-break-before: always; }
+          body { 
+            margin: 0; 
+            font-size: 15px;
+          }
+          .page-break { 
+            page-break-before: always; 
+          }
+          .avoid-break {
+            page-break-inside: avoid;
+          }
         }
       </style>
     </head>
@@ -338,7 +417,7 @@ function convertMarkdownToHtml(markdown: string, event: CalendarEvent): string {
       <div class="cprime-logo">🚀 CPRIME TECHNOLOGIES</div>
       <div class="meeting-header">
         <h1>PRE-CALL BRIEFING DOCUMENT</h1>
-        <p style="margin: 10px 0 0 0; font-size: 18px;">Confidential & Internal Use Only</p>
+        <p style="margin: 10px 0 0 0; font-size: 16px;">Confidential & Internal Use Only</p>
       </div>
       
       ${urgencyBadge}
@@ -348,7 +427,9 @@ function convertMarkdownToHtml(markdown: string, event: CalendarEvent): string {
         <strong>Date:</strong> ${new Date(event.startTime).toLocaleString()}
       </div>
       
-      ${html}
+      <div class="compact-section">
+        ${html}
+      </div>
       
       <div class="confidential">
         This document contains confidential and proprietary information. 
