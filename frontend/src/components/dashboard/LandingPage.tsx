@@ -1,0 +1,130 @@
+import React from 'react';
+import { motion } from 'framer-motion';
+import { Calendar, MessageCircle, Zap, Clock, FileText, Mail } from 'lucide-react';
+import { Card } from '../ui/Card';
+import { Button } from '../ui/Button';
+import { useAppContext } from '../../contexts/AppContext';
+
+const features = [
+  {
+    icon: Calendar,
+    title: 'Smart Calendar Sync',
+    description: 'Automatically detects upcoming meetings and prepares research materials.'
+  },
+  {
+    icon: MessageCircle,
+    title: 'AI Chat Assistant',
+    description: 'Conversational preparation for any meeting with intelligent follow-up questions.'
+  },
+  {
+    icon: FileText,
+    title: 'Professional Summaries',
+    description: 'Generate comprehensive PDF briefs with company research and attendee profiles.'
+  },
+  {
+    icon: Mail,
+    title: 'Email Integration',
+    description: 'Automatically sends preparation materials directly to your inbox.'
+  }
+];
+
+export function LandingPage() {
+  const { dispatch } = useAppContext();
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:via-blue-900 dark:to-purple-900">
+      <div className="container mx-auto px-6 py-12">
+        {/* Hero Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8 }}
+          className="text-center mb-16"
+        >
+          <div className="flex items-center justify-center mb-6">
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+              className="p-4 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 shadow-2xl"
+            >
+              <Zap className="h-8 w-8 text-white" />
+            </motion.div>
+          </div>
+          
+          <h1 className="text-5xl md:text-7xl font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent mb-6">
+            AI Meeting Prep
+          </h1>
+          
+          <p className="text-xl md:text-2xl text-gray-600 dark:text-gray-300 mb-12 max-w-3xl mx-auto leading-relaxed">
+            Never walk into an unprepared meeting again. Our AI assistant researches your meetings, 
+            prepares comprehensive briefs, and delivers them directly to your inbox.
+          </p>
+
+          {/* Action Cards */}
+          <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto mb-16">
+            <Card onClick={() => dispatch({ type: 'SET_MODE', payload: 'oauth' })}>
+              <div className="p-8 text-center">
+                <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg mb-6">
+                  <Calendar className="h-8 w-8 text-white" />
+                </div>
+                <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
+                  🔗 Connect Calendar
+                </h3>
+                <p className="text-gray-600 dark:text-gray-300 mb-6">
+                  Automatic meeting detection and preparation with OAuth integration
+                </p>
+                <Button size="lg" className="w-full">
+                  Get Started
+                </Button>
+              </div>
+            </Card>
+
+            <Card onClick={() => dispatch({ type: 'SET_MODE', payload: 'chat' })}>
+              <div className="p-8 text-center">
+                <div className="inline-flex p-4 rounded-2xl bg-gradient-to-br from-purple-500 to-purple-600 shadow-lg mb-6">
+                  <MessageCircle className="h-8 w-8 text-white" />
+                </div>
+                <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
+                  💬 Chat with AI
+                </h3>
+                <p className="text-gray-600 dark:text-gray-300 mb-6">
+                  Conversational meeting preparation with intelligent AI assistance
+                </p>
+                <Button variant="secondary" size="lg" className="w-full">
+                  Start Chat
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </motion.div>
+
+        {/* Features Grid */}
+        <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, delay: 0.2 }}
+          className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 mb-16"
+        >
+          {features.map((feature, index) => (
+            <motion.div
+              key={index}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.1 * index }}
+            >
+              <Card className="p-6 text-center h-full">
+                <feature.icon className="h-12 w-12 mx-auto mb-4 text-blue-600 dark:text-blue-400" />
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                  {feature.title}
+                </h3>
+                <p className="text-gray-600 dark:text-gray-300 text-sm">
+                  {feature.description}
+                </p>
+              </Card>
+            </motion.div>
+          ))}
+        </motion.div>
+      </div>
+    </div>
+  );
+}

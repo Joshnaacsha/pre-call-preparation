@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import type { GraphState, CalendarEvent, RetrievedMeeting } from '../graph/graphState.js';
+import { embedAndStoreEvent } from '../embeddings/embedAndStore.js';
 
 dotenv.config();
 
@@ -127,6 +128,30 @@ Focus on REVENUE IMPACT, not technical details. Use sales language: prospects, p
     console.log('✅ Concise meeting summary generated successfully');
     console.log('📄 Summary preview:');
     console.log(formattedSummary.slice(0, 300) + '...');
+
+    // Store the summary in Supabase
+    try {
+      // Create an enhanced event object with summary data
+      const enhancedEvent = {
+        ...currentEvent,
+        description: formattedSummary,
+        metadata: {
+          client_name: currentEvent.summary.split('-')[0].trim(),
+          project_name: currentEvent.summary.split('-')[1]?.trim() || currentEvent.summary,
+          meeting_goal: parsed.clientContext,
+          raw_summary: parsed
+        }
+      };
+      
+      console.log('📝 Attempting to store meeting data');
+      await embedAndStoreEvent(enhancedEvent);
+      console.log('✅ Summary stored in database');
+    } catch (error) {
+      console.error('❌ Failed to store summary:', {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined
+      });
+    }
 
     return {
       ...state,

@@ -1,8 +1,9 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { authorizeAndListEvents } from './calendar/authorize.js';
 import { embedAndStoreAllEvents } from './embeddings/embedAndStore.js';
+import { handleChatRequest } from './agents/chatAgent.js';
 import { searchPreviousMeetings } from './calendar/searchPreviousMeetings.js';
 import { prepareTavilyInputAgent } from './agents/tavilySearchAgent.js';
 import { conductLinkedInResearch } from './agents/linkedinAgent.js';
@@ -12,33 +13,107 @@ import { hasPdfBeenGenerated, markPdfAsGenerated } from './calendar/listEvents.j
 import type { GraphState, RetrievedMeeting } from './graph/graphState.js';
 import fs from 'fs';
 import path from 'path';
+import { google } from 'googleapis';
+import { listUpcomingEvents } from './calendar/listEvents.js';
 
 dotenv.config();
 
 const app = express();
 
 // Configure CORS
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'http://localhost:3001');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
+app.use(cors({
+  origin: ['http://localhost:3001', 'http://localhost:3002', 'http://192.168.56.1:3002', 'http://localhost:5173', 'http://127.0.0.1:5173'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true,
+  optionsSuccessStatus: 200,
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+}));
 
 app.use(express.json());
 
-async function main() {
+// Google OAuth setup
+const SCOPES = [
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile'
+];
+
+const TOKEN_PATH = path.resolve(process.cwd(), 'src/auth/token.json');
+
+const oAuth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  process.env.GOOGLE_REDIRECT_URI
+);
+
+// OAuth endpoints
+app.get('/api/auth-url', (req, res) => {
+  const authUrl = oAuth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: SCOPES,
+    prompt: 'consent',
+    include_granted_scopes: true
+  });
+  res.json({ url: authUrl });
+});
+
+// Handle both OAuth callback paths
+app.get('/oauth2callback', handleOAuthCallback);
+app.get('/api/oauth2callback', handleOAuthCallback);
+
+// OAuth callback handler function
+async function handleOAuthCallback(req: Request, res: Response) {
+  console.log('🔄 OAuth callback received:', { query: req.query });
+  const codeParam = req.query.code;
+
+  if (!codeParam || typeof codeParam !== 'string') {
+    console.log('❌ OAuth callback error: No code provided');
+    res.status(400).json({ error: 'No code provided' });
+    return;
+  }
+
+  try {
+    console.log('📡 Getting tokens from Google...');
+    const { tokens } = await oAuth2Client.getToken(codeParam);
+    console.log('✅ Tokens received successfully');
+    oAuth2Client.setCredentials(tokens);
+
+    fs.mkdirSync(path.dirname(TOKEN_PATH), { recursive: true });
+    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens));
+    console.log('✅ Token stored to', TOKEN_PATH);
+
+    // Start the pre-call preparation process
+    runScheduledPipeline().catch(error => {
+      console.error('Failed to start pipeline:', error);
+    });
+    
+    // Redirect back to the frontend with success status
+    res.redirect('http://localhost:5173/oauth?auth=success');
+  } catch (err) {
+    console.error('❌ Error retrieving access token', err);
+    res.status(500).json({ 
+      error: 'Failed to retrieve access token',
+      details: err instanceof Error ? err.message : 'Unknown error'
+    });
+  }
+}
+  
+
+
+async function main(initialState?: GraphState): Promise<GraphState> {
   console.log('\n🚀 Starting Cprime AI Pre-Call Pipeline...');
   console.log('=' .repeat(60));
-  console.log('🕐 Scanning for client meetings in the next 3 hours...\n');
 
-  // Step 1: Get filtered calendar events (only next 3 hours, client meetings)
-  let state: GraphState = await authorizeAndListEvents();
+  let state: GraphState;
+
+  if (initialState) {
+    console.log('🤖 Processing chat-initiated meeting preparation...\n');
+    state = initialState;
+  } else {
+    console.log('🕐 Scanning for client meetings in the next 3 hours...\n');
+    // Step 1: Get filtered calendar events (only next 3 hours, client meetings)
+    state = await authorizeAndListEvents();
+  }
   
   // 🔍 DEBUG: Check what we got from authorize
   console.log('🔍 Debug - State after authorize:', {
@@ -54,7 +129,7 @@ async function main() {
     console.log('   - All existing meetings may already have PDFs generated');
     console.log('   - Or no meetings match client/external attendee criteria');
     console.log('   - Pipeline completed successfully with no work needed.\n');
-    return;
+    return state;
   }
 
   console.log(`📅 Found ${state.calendarEvents.length} client meeting(s) requiring processing:`);
@@ -274,6 +349,7 @@ async function main() {
   console.log(`   - Meeting summaries via Gemini: ${process.env.GEMINI_API_KEY ? 'Enabled' : 'Disabled'}`);
 
   console.log('\n✅ Pre-call preparation pipeline completed successfully!');
+  return state;
 }
 
 /**
@@ -350,10 +426,123 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Chat endpoint for manual meeting preparation
+// Fixed Chat endpoint
+app.post('/api/chat', async (req, res) => {
+  console.log('📝 Chat request received:', req.body);
+  try {
+    const { message, context } = req.body;
+    
+    console.log('🔍 Validating chat request...');
+
+    if (!message) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message is required'
+      });
+    }
+    
+    // Check if this is a query about meeting summaries
+    const summaryKeywords = ['summary', 'previous', 'history', 'last meeting', 'past meetings'];
+    if (summaryKeywords.some(keyword => message.toLowerCase().includes(keyword))) {
+      const { searchDocuments } = await import('./embeddings/embedAndStore.js');
+      const summaries = await searchDocuments(message);
+      
+      if (summaries && summaries.length > 0) {
+        const latestSummary = summaries[0];
+        console.log('📚 Found relevant meeting summaries:', summaries.length);
+        return res.json({
+          success: true,
+          reply: `Here's what I found about the ${latestSummary.metadata.client_name || ''} ${latestSummary.metadata.project_name || ''} meeting:\n\n${latestSummary.description}`,
+          summaries: summaries
+        });
+      }
+    }
+    
+    // Fix: Remove duplicate return statement
+    if (!message) {
+      console.log('❌ No message provided');
+      return res.status(400).json({
+        success: false,
+        error: 'Message is required'
+      });
+    }
+
+    console.log('🤖 Processing chat request...');
+    const chatResult = await handleChatRequest({ message, context });
+    console.log('✅ Chat processing completed:', chatResult);
+
+    if (chatResult.needsMoreInfo) {
+      console.log('❓ More info needed, sending follow-up question');
+      return res.json({
+        success: true,
+        needsMoreInfo: true,
+        followUpQuestion: chatResult.followUpQuestion
+      });
+    }
+
+    if (!chatResult.graphState) {
+      console.log('❌ No graph state generated');
+      return res.status(200).json({
+        success: true,
+        needsMoreInfo: chatResult.needsMoreInfo,
+        followUpQuestion: chatResult.followUpQuestion
+      });
+    }
+
+    console.log('🚀 Starting pipeline with chat-generated state...');
+    // Run the pipeline with the chat-generated state
+    const result = await main(chatResult.graphState);
+
+    // Get the latest generated summary file
+    const summaryFileName = `briefing-${chatResult.graphState.calendarEvents[0].summary.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.md`;
+    const summaryPath = path.join(process.cwd(), 'summaries', summaryFileName);
+    
+    let summary = '';
+    try {
+      if (fs.existsSync(summaryPath)) {
+        summary = fs.readFileSync(summaryPath, 'utf8');
+        console.log('📝 Summary found in:', summaryFileName);
+      }
+
+      console.log('✅ Pipeline completed, checking for summary');
+      console.log('📝 Summary found:', summary ? 'Yes' : 'No');
+
+      return res.json({ 
+        success: true,
+        needsMoreInfo: false,
+        reply: summary || 'Meeting preparation completed. The briefing has been generated and saved. You can find it in the summaries folder.',
+        message: 'Meeting preparation completed successfully'
+      });
+    } catch (error) {
+      console.error('Error reading summary file:', error);
+      return res.json({
+        success: true,
+        needsMoreInfo: false,
+        reply: 'Meeting preparation completed. The briefing has been generated and saved, but there was an error reading it.',
+        message: 'Meeting preparation completed with warnings'
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Error in chat endpoint:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Chat processing failed',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
 // Start the server
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+app.listen(parseInt(process.env.PORT || '3001'), () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📋 Available endpoints:`);
+  console.log(`   GET  /api/health - Health check`);
+  console.log(`   GET  /api/auth-url - Get Google OAuth URL`);
+  console.log(`   GET  /api/oauth2callback - OAuth callback`);
+  console.log(`   POST /api/start-pipeline - Start pipeline manually`);
+  console.log(`   POST /api/chat - Chat-based meeting preparation`);
 });
 
 // Optional: Run the pipeline on startup
