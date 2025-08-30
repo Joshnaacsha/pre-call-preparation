@@ -8,7 +8,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
 // Interface for Tavily API response
-interface TavilySearchResult {
+export interface TavilySearchResult {
   title: string;
   url: string;
   content: string;
@@ -186,7 +186,7 @@ function validateSearchQuery(searchQuery: string, meetingSummary: string): boole
 }
 
 // Function to perform actual Tavily search
-async function performTavilySearch(query: string): Promise<TavilySearchResult[]> {
+export async function performTavilySearch(query: string): Promise<TavilySearchResult[]> {
   const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
   
   if (!TAVILY_API_KEY) {
@@ -242,7 +242,7 @@ async function performTavilySearch(query: string): Promise<TavilySearchResult[]>
 }
 
 // Function to process search results and extract relevant information
-async function processSearchResults(
+export async function processSearchResults(
   results: TavilySearchResult[], 
   projectName: string
 ): Promise<{ companyNews: string; contactUpdates: string }> {

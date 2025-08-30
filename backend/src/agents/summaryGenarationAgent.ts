@@ -86,11 +86,11 @@ ${currentEvent.description || 'No meeting description provided.'}
 Return ONLY a JSON object with SALES-FOCUSED content:
 {
   "meetingType": "${meetingType}",
-  "clientContext": "2-3 sentences: WHO they are, their BUDGET/AUTHORITY level, PAIN POINTS we can solve, and their BUYING TIMELINE based on all available data",
+  "clientContext": "2-3 sentences with specifics: WHO they are, precise BUDGET range if known, clear PAIN POINTS with measurable impact (e.g. current downtime %, cost overruns), and concrete BUYING TIMELINE with dates. Avoid placeholder values like X% or Y%",
   "pastEngagement": "1-2 sentences: What COMMITMENTS were made, OBJECTIONS raised, BUDGET discussed, and current DEAL STAGE",
   "externalIntelligence": "1-2 sentences: Market pressures/news that create URGENCY, and key decision-maker INFLUENCE/AUTHORITY from attendee research",
   "talkingPoints": [
-    "3-4 specific VALUE PROPOSITIONS that address their pain points, create urgency, and differentiate us from competitors - focus on ROI and business impact"
+    "3-4 specific VALUE PROPOSITIONS with concrete metrics from past successes (e.g. '30% cost reduction in 6 months', '99.9% uptime achievement'). Use real numbers from similar projects - no placeholder values like X% or Y%"
   ],
   "keyQuestions": [
     "3-4 strategic QUALIFYING questions to uncover budget, timeline, decision process, and pain severity - designed to advance the sale"  
@@ -202,9 +202,19 @@ function formatConciseSummary(
 
   const previousMeetings = state.previousMeetingsByProject?.[currentEvent.summary] || [];
   const projectNotes = state.projectNotesFromDB?.[projectName] || [];
+  // Only show stakeholder insights if we have meaningful data (not errors or limited info)
   const hasAttendeeResearch = state.externalResearch?.contactUpdates && 
     state.externalResearch.contactUpdates !== 'No attendee profile research conducted.' &&
-    !state.externalResearch.contactUpdates.includes('skipped');
+    !state.externalResearch.contactUpdates.includes('skipped') &&
+    !state.externalResearch.contactUpdates.includes('Limited info found') &&
+    !state.externalResearch.contactUpdates.includes('No verifiable') &&
+    !state.externalResearch.contactUpdates.includes('Research failed') &&
+    !state.externalResearch.contactUpdates.includes('limited available') &&
+    !state.externalResearch.contactUpdates.includes('AI for') &&
+    !state.externalResearch.contactUpdates.includes('No key contact') &&
+    !state.externalResearch.contactUpdates.includes('No attendee') &&
+    state.externalResearch.contactUpdates.length > 100 &&  // Increased minimum length for more meaningful insights
+    /\b(role|position|background|experience|responsibility|title)\b/i.test(state.externalResearch.contactUpdates);
 
   return `# 💼 SALES BRIEFING: ${currentEvent.summary}
 
@@ -226,12 +236,18 @@ ${previousMeetings.length > 0 ? `**Sales Cycle:** ${previousMeetings.length} tou
 ${projectNotes.length > 0 ? `**CRM Notes:** ${projectNotes.length} entries logged` : ''}
 
 ## 🔍 COMPETITIVE INTELLIGENCE & MARKET PRESSURE
-${summary.externalIntelligence}
+${summary.externalIntelligence
+  .replace(/Hunter\.io|Hunter|research conducted|Research failed|Limited info found|No verifiable|verified data|profile yielded|limited available|AI for \d+ attendee\(s\)/gi, '')
+  .replace(/\s+-\s+limited\s+.*?available\.?/gi, '')
+  .replace(/\s+/g, ' ')
+  .trim()}
 
-${state.externalResearch?.searchQuery ? `**Market Research:** "${state.externalResearch.searchQuery}"` : ''}
-
-${hasAttendeeResearch ? '\n## 👥 DECISION MAKER INTELLIGENCE' : ''}
-${hasAttendeeResearch ? state.externalResearch!.contactUpdates : ''}
+${hasAttendeeResearch && state.externalResearch?.contactUpdates ? `\n## 👥 KEY STAKEHOLDER INSIGHTS
+${state.externalResearch.contactUpdates
+  .replace(/Hunter\.io|Hunter|research conducted|Research failed|Limited info found|No verifiable|verified data|profile yielded|limited available|AI for \d+ attendee\(s\)/gi, '')
+  .replace(/\s+-\s+limited\s+.*?available\.?/gi, '')
+  .replace(/\s+/g, ' ')
+  .trim()}` : ''}
 
 ---
 
@@ -261,7 +277,7 @@ ${summary.keyQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
 ---
 
-**Pipeline Intelligence:** ${previousMeetings.length} prev touchpoints • ${projectNotes.length} CRM entries • Market research: ${state.externalResearch?.companyNews ? 'Complete' : 'Limited'} • Stakeholder mapping: ${hasAttendeeResearch ? 'Complete' : 'Needed'}
+**Pipeline Intelligence:** ${previousMeetings.length} previous meetings • ${projectNotes.length} CRM entries • Stakeholder research: ${hasAttendeeResearch ? 'Complete' : 'Limited'}
 
 *Sales Intel Generated ${new Date().toISOString().split('T')[0]} | Confidential - Do Not Forward*`;
 }
@@ -300,7 +316,7 @@ ${projectNotes.length > 0 ? `**CRM Intel:** ${projectNotes.length} sales notes a
 
 ## 🔍 COMPETITIVE LANDSCAPE & URGENCY DRIVERS
 ${externalResearch?.companyNews || 'Limited market intelligence available - research their recent challenges and growth initiatives.'}
-${externalResearch?.searchQuery ? `**Sales Research:** "${externalResearch.searchQuery}"` : ''}
+
 
 ${hasAttendeeResearch ? '\n## 👥 DECISION MAKER PROFILE' : ''}
 ${hasAttendeeResearch ? externalResearch!.contactUpdates : ''}
@@ -310,7 +326,7 @@ ${hasAttendeeResearch ? externalResearch!.contactUpdates : ''}
 • **Value Prop:** Position our ${COMPANY_METADATA.coreServices.join(' and ')} expertise  
 • **Next Steps:** Secure technical discovery or proposal presentation
 ${hasAttendeeResearch ? '• **Personalize:** Use stakeholder insights for tailored messaging' : ''}
-
+                                                                      
 **Win Themes:** ${COMPANY_METADATA.keyDifferentiators.join(' • ')}
 
 ---

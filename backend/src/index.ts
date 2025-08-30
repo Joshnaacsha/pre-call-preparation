@@ -3,10 +3,18 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { authorizeAndListEvents } from './calendar/authorize.js';
 import { embedAndStoreAllEvents } from './embeddings/embedAndStore.js';
-import { handleChatRequest } from './agents/chatAgent.js';
+import { 
+  handleChatRequest, 
+  isActiveSession, 
+  startMeetingSession, 
+  isMeetingIntent,
+  clearConversationState,
+  getConversationState 
+} from './agents/chatAgent.js';
 import { searchPreviousMeetings } from './calendar/searchPreviousMeetings.js';
 import { prepareTavilyInputAgent } from './agents/tavilySearchAgent.js';
-import { conductLinkedInResearch } from './agents/linkedinAgent.js';
+// Updated import: Add Hunter.io research function
+import { conductHunterResearch, conductLinkedInResearch } from './agents/linkedinAgent.js';
 import { generateMeetingSummary } from './agents/summaryGenarationAgent.js';
 import { generatePdfAndSendEmail } from './agents/pdfEmailAgent.js';
 import { hasPdfBeenGenerated, markPdfAsGenerated } from './calendar/listEvents.js';
@@ -45,6 +53,86 @@ const oAuth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_SECRET,
   process.env.GOOGLE_REDIRECT_URI
 );
+
+// Chat routing utilities
+class ChatRouter {
+  // Intent classification cache for performance
+  private intentCache = new Map<string, string>();
+  private readonly MAX_CACHE_SIZE = 100;
+
+  /**
+   * Route incoming message to appropriate handler
+   */
+  route(message: string, sessionId: string): 'meeting_collection' | 'rag_search' | 'summary_search' {
+    // Check if there's an active session first (O(1) operation)
+    if (isActiveSession(sessionId)) {
+      return 'meeting_collection';
+    }
+
+    // Check intent with caching
+    const intent = this.classifyIntent(message);
+    
+    if (intent === 'meeting_prep') {
+      startMeetingSession(sessionId);
+      return 'meeting_collection';
+    }
+
+    if (intent === 'summary_search') {
+      return 'summary_search';
+    }
+
+    return 'rag_search';
+  }
+
+  /**
+   * Fast intent classification with caching
+   */
+  private classifyIntent(message: string): 'meeting_prep' | 'summary_search' | 'general' {
+    const cacheKey = message.toLowerCase().trim();
+    
+    // Check cache first
+    if (this.intentCache.has(cacheKey)) {
+      return this.intentCache.get(cacheKey) as any;
+    }
+
+    let intent: 'meeting_prep' | 'summary_search' | 'general';
+    const msg = message.toLowerCase();
+
+    // Meeting preparation patterns
+    if (/\b(prepare|meeting|client|tomorrow|today|next week|schedule|brief|get summary)\b/.test(msg)) {
+      intent = 'meeting_prep';
+    }
+    // Summary/search patterns
+    else if (/\b(summary|previous|history|last meeting|past meetings|find|search)\b/.test(msg)) {
+      intent = 'summary_search';
+    }
+    // Default to general
+    else {
+      intent = 'general';
+    }
+
+    // Cache the result (with simple LRU)
+    this.updateCache(cacheKey, intent);
+    
+    return intent;
+  }
+
+  /**
+   * Update cache with LRU eviction
+   */
+  private updateCache(key: string, value: string): void {
+    if (this.intentCache.size >= this.MAX_CACHE_SIZE) {
+      const firstKey = this.intentCache.keys().next().value;
+      if (typeof firstKey === 'string') {
+        this.intentCache.delete(firstKey);
+      }
+    }
+    this.intentCache.set(key, value);
+  }
+}
+
+// Initialize router
+const chatRouter = new ChatRouter();
 
 // OAuth endpoints
 app.get('/api/auth-url', (req, res) => {
@@ -97,8 +185,6 @@ async function handleOAuthCallback(req: Request, res: Response) {
     });
   }
 }
-  
-
 
 async function main(initialState?: GraphState): Promise<GraphState> {
   console.log('\n🚀 Starting Cprime AI Pre-Call Pipeline...');
@@ -115,7 +201,7 @@ async function main(initialState?: GraphState): Promise<GraphState> {
     state = await authorizeAndListEvents();
   }
   
-  // 🔍 DEBUG: Check what we got from authorize
+  // DEBUG: Check what we got from authorize
   console.log('🔍 Debug - State after authorize:', {
     hasCalendarEvents: !!state.calendarEvents,
     eventsLength: state.calendarEvents?.length || 0,
@@ -179,7 +265,7 @@ async function main(initialState?: GraphState): Promise<GraphState> {
       console.log(`   🔍 Searching previous meetings for "${currentEvent.summary}"...`);
       const results = await searchPreviousMeetings(currentEvent.summary, currentEvent.startTime);
       
-      const convertedMeetings: RetrievedMeeting[] = results.map((doc) => {
+      const convertedMeetings: RetrievedMeeting[] = results.map((doc: { metadata: any; pageContent: any; }) => {
         const { metadata, pageContent } = doc;
         return {
           metadata: {
@@ -214,25 +300,37 @@ async function main(initialState?: GraphState): Promise<GraphState> {
         // Continue without external research
       }
 
-     // Step 3c: LinkedIn/Professional Research for attendees
-      console.log(`   🔗 Conducting attendee profile research...`);
+      // Step 3c: UPDATED - Hunter.io + AI Professional Research for attendees
+      console.log(`   🎯 Conducting enhanced attendee research (Hunter.io + AI)...`);
       try {
-        const linkedinState = await conductLinkedInResearch(individualMeetingState);
-        // Merge the contactUpdates from LinkedIn research with existing externalResearch
-        // Ensure all required fields are present
-        individualMeetingState.externalResearch = {
-          searchQuery: linkedinState.externalResearch?.searchQuery || individualMeetingState.externalResearch?.searchQuery || '',
-          companyNews: linkedinState.externalResearch?.companyNews || individualMeetingState.externalResearch?.companyNews || '',
-          contactUpdates: linkedinState.externalResearch?.contactUpdates || individualMeetingState.externalResearch?.contactUpdates || '',
-        };
-        console.log(`   ✅ Attendee profile research completed`);
+        // Try Hunter.io first, fallback to LinkedIn research if Hunter.io unavailable
+        const hunterApiKey = process.env.HUNTER_API_KEY;
+        let researchState;
         
-        // Show brief LinkedIn research summary
-        const contactLength = linkedinState.externalResearch?.contactUpdates?.length || 0;
-        console.log(`      👥 Attendee Data: ${contactLength} characters`);
+        if (hunterApiKey && !hunterApiKey.startsWith("your_hunter_api_key")) {
+          console.log(`      🎯 Using Hunter.io + AI research...`);
+          researchState = await conductHunterResearch(individualMeetingState);
+        } else {
+          console.log(`      🔗 Using AI-only research (Hunter.io not configured)...`);
+          researchState = await conductLinkedInResearch(individualMeetingState);
+        }
+        
+        // Merge the contactUpdates from research with existing externalResearch
+        individualMeetingState.externalResearch = {
+          searchQuery: researchState.externalResearch?.searchQuery || individualMeetingState.externalResearch?.searchQuery || '',
+          companyNews: researchState.externalResearch?.companyNews || individualMeetingState.externalResearch?.companyNews || '',
+          contactUpdates: researchState.externalResearch?.contactUpdates || individualMeetingState.externalResearch?.contactUpdates || '',
+        };
+        
+        console.log(`   ✅ Attendee research completed`);
+        
+        // Show brief research summary
+        const contactLength = researchState.externalResearch?.contactUpdates?.length || 0;
+        const isHunterData = researchState.externalResearch?.contactUpdates?.includes('Hunter.io') || false;
+        console.log(`      👥 Attendee Data: ${contactLength} characters ${isHunterData ? '(Hunter.io verified)' : '(AI analysis)'}`);
       } catch (error) {
-        console.error(`   ⚠️  LinkedIn research failed: ${error}`);
-        // Continue without LinkedIn research
+        console.error(`   ⚠️  Attendee research failed: ${error}`);
+        // Continue without attendee research
       }
       
       // Step 3d: Generate meeting summary (now includes all research data)
@@ -247,8 +345,9 @@ async function main(initialState?: GraphState): Promise<GraphState> {
         const hasAttendeeData = individualMeetingState.externalResearch?.contactUpdates && 
           !individualMeetingState.externalResearch.contactUpdates.includes('skipped');
         const hasPreviousMeetings = convertedMeetings.length > 0;
+        const isHunterEnhanced = individualMeetingState.externalResearch?.contactUpdates?.includes('Hunter.io') || false;
         
-        console.log(`      📊 Data sources: Company news: ${hasCompanyNews ? 'Yes' : 'No'}, Attendee profiles: ${hasAttendeeData ? 'Yes' : 'No'}, Previous meetings: ${hasPreviousMeetings ? 'Yes' : 'No'}`);
+        console.log(`      📊 Data sources: Company news: ${hasCompanyNews ? 'Yes' : 'No'}, Attendee profiles: ${hasAttendeeData ? (isHunterEnhanced ? 'Hunter.io' : 'AI') : 'No'}, Previous meetings: ${hasPreviousMeetings ? 'Yes' : 'No'}`);
         
       } catch (error) {
         console.error(`   ❌ Summary generation failed:`, error);
@@ -316,7 +415,7 @@ async function main(initialState?: GraphState): Promise<GraphState> {
     }
   }
 
-  // Final summary
+  // Final summary with enhanced reporting
   console.log('\n🎉 PIPELINE COMPLETED!');
   console.log('=' .repeat(40));
   console.log(`📊 Results Summary:`);
@@ -325,7 +424,6 @@ async function main(initialState?: GraphState): Promise<GraphState> {
   console.log(`   - Check your email and summaries folder for briefing materials`);
   console.log(`   - PDFs are tracked to prevent duplicate generation`);
   console.log(`   - Embeddings are now tracked to prevent duplicates`);
-  console.log(`   - LinkedIn/Attendee research integrated into briefings`);
   
   // Show urgency summary
   const urgentMeetings = state.calendarEvents.filter(event => {
@@ -342,11 +440,20 @@ async function main(initialState?: GraphState): Promise<GraphState> {
     });
   }
 
-  // Show research summary
-  console.log(`\n📊 RESEARCH SUMMARY:`);
-  console.log(`   - Company research via Tavily: ${process.env.TAVILY_API_KEY ? 'Enabled' : 'Disabled'}`);
-  console.log(`   - Attendee profiles via OpenAI: ${process.env.OPENAI_API_KEY ? 'Enabled' : 'Disabled'}`);
-  console.log(`   - Meeting summaries via Gemini: ${process.env.GEMINI_API_KEY ? 'Enabled' : 'Disabled'}`);
+  // Enhanced research summary with Hunter.io status
+  console.log(`\n📊 RESEARCH CAPABILITIES:`);
+  const hasHunter = process.env.HUNTER_API_KEY && !process.env.HUNTER_API_KEY.startsWith("your_hunter_api_key");
+  const hasOpenAI = process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.startsWith("your_api_key");
+  const hasTavily = process.env.TAVILY_API_KEY && !process.env.TAVILY_API_KEY.startsWith("your_tavily_api_key");
+  const hasGemini = process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith("your_gemini_api_key");
+  
+  console.log(`   - Attendee Research: ${hasHunter ? 'Hunter.io + AI (Enhanced)' : hasOpenAI ? 'AI Only (Basic)' : 'Disabled'}`);
+  console.log(`   - Company Research: ${hasTavily ? 'Tavily (Enabled)' : 'Disabled'}`);
+  console.log(`   - Meeting Summaries: ${hasGemini ? 'Gemini (Enabled)' : 'Disabled'}`);
+
+  if (!hasHunter && hasOpenAI) {
+    console.log(`\n💡 TIP: Add HUNTER_API_KEY to .env for enhanced attendee research with verified professional data!`);
+  }
 
   console.log('\n✅ Pre-call preparation pipeline completed successfully!');
   return state;
@@ -426,123 +533,447 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Chat endpoint for manual meeting preparation
-// Fixed Chat endpoint
-app.post('/api/chat', async (req, res) => {
-  console.log('📝 Chat request received:', req.body);
+// NEW: Endpoint to check API configuration status
+app.get('/api/config-status', (req, res) => {
+  const hasHunter = process.env.HUNTER_API_KEY && !process.env.HUNTER_API_KEY.startsWith("your_hunter_api_key");
+  const hasOpenAI = process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.startsWith("your_api_key");
+  const hasTavily = process.env.TAVILY_API_KEY && !process.env.TAVILY_API_KEY.startsWith("your_tavily_api_key");
+  const hasGemini = process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith("your_gemini_api_key");
+  
+  res.json({
+    attendeeResearch: {
+      type: hasHunter ? 'hunter' : hasOpenAI ? 'ai_only' : 'disabled',
+      status: hasHunter ? 'Hunter.io + AI (Enhanced)' : hasOpenAI ? 'AI Only (Basic)' : 'Disabled'
+    },
+    companyResearch: {
+      type: hasTavily ? 'tavily' : 'disabled',
+      status: hasTavily ? 'Tavily (Enabled)' : 'Disabled'
+    },
+    summaryGeneration: {
+      type: hasGemini ? 'gemini' : 'disabled', 
+      status: hasGemini ? 'Gemini (Enabled)' : 'Disabled'
+    },
+    recommendations: {
+      hunter: hasHunter ? null : 'Add HUNTER_API_KEY for enhanced attendee research',
+      tavily: hasTavily ? null : 'Add TAVILY_API_KEY for company research',
+      gemini: hasGemini ? null : 'Add GEMINI_API_KEY for AI summaries'
+    }
+  });
+});
+
+// Handler functions for different request types
+async function handleMeetingRequest(
+  message: string, 
+  context: string | undefined, 
+  sessionId: string, 
+  res: Response
+): Promise<Response> {
+  console.log('Processing meeting preparation request...');
+  
   try {
-    const { message, context } = req.body;
+    const chatResult = await handleChatRequest({ message, context, sessionId });
     
-    console.log('🔍 Validating chat request...');
-
-    if (!message) {
-      return res.status(400).json({
-        success: false,
-        error: 'Message is required'
-      });
-    }
-    
-    // Check if this is a query about meeting summaries
-    const summaryKeywords = ['summary', 'previous', 'history', 'last meeting', 'past meetings'];
-    if (summaryKeywords.some(keyword => message.toLowerCase().includes(keyword))) {
-      const { searchDocuments } = await import('./embeddings/embedAndStore.js');
-      const summaries = await searchDocuments(message);
-      
-      if (summaries && summaries.length > 0) {
-        const latestSummary = summaries[0];
-        console.log('📚 Found relevant meeting summaries:', summaries.length);
-        return res.json({
-          success: true,
-          reply: `Here's what I found about the ${latestSummary.metadata.client_name || ''} ${latestSummary.metadata.project_name || ''} meeting:\n\n${latestSummary.description}`,
-          summaries: summaries
-        });
-      }
-    }
-    
-    // Fix: Remove duplicate return statement
-    if (!message) {
-      console.log('❌ No message provided');
-      return res.status(400).json({
-        success: false,
-        error: 'Message is required'
-      });
-    }
-
-    console.log('🤖 Processing chat request...');
-    const chatResult = await handleChatRequest({ message, context });
-    console.log('✅ Chat processing completed:', chatResult);
-
     if (chatResult.needsMoreInfo) {
-      console.log('❓ More info needed, sending follow-up question');
+      console.log('More info needed, sending follow-up question');
       return res.json({
         success: true,
         needsMoreInfo: true,
-        followUpQuestion: chatResult.followUpQuestion
+        followUpQuestion: chatResult.followUpQuestion,
+        type: 'meeting_preparation',
+        currentState: getConversationState(sessionId)
       });
     }
 
-    if (!chatResult.graphState) {
-      console.log('❌ No graph state generated');
-      return res.status(200).json({
-        success: true,
-        needsMoreInfo: chatResult.needsMoreInfo,
-        followUpQuestion: chatResult.followUpQuestion
-      });
-    }
+    if (chatResult.graphState && chatResult.summary) {
+      console.log('Meeting info collected, starting full research pipeline...');
+      
+      // Clear the session since we have all needed info
+      clearConversationState(sessionId);
+      
+      // Run the research pipeline and wait for results
+      const researchedState = await runFullResearchPipeline(chatResult.graphState);
 
-    console.log('🚀 Starting pipeline with chat-generated state...');
-    // Run the pipeline with the chat-generated state
-    const result = await main(chatResult.graphState);
-
-    // Get the latest generated summary file
-    const summaryFileName = `briefing-${chatResult.graphState.calendarEvents[0].summary.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.md`;
-    const summaryPath = path.join(process.cwd(), 'summaries', summaryFileName);
-    
-    let summary = '';
-    try {
-      if (fs.existsSync(summaryPath)) {
-        summary = fs.readFileSync(summaryPath, 'utf8');
-        console.log('📝 Summary found in:', summaryFileName);
-      }
-
-      console.log('✅ Pipeline completed, checking for summary');
-      console.log('📝 Summary found:', summary ? 'Yes' : 'No');
-
-      return res.json({ 
-        success: true,
-        needsMoreInfo: false,
-        reply: summary || 'Meeting preparation completed. The briefing has been generated and saved. You can find it in the summaries folder.',
-        message: 'Meeting preparation completed successfully'
-      });
-    } catch (error) {
-      console.error('Error reading summary file:', error);
+      // Return the comprehensive results to the user
       return res.json({
         success: true,
         needsMoreInfo: false,
-        reply: 'Meeting preparation completed. The briefing has been generated and saved, but there was an error reading it.',
-        message: 'Meeting preparation completed with warnings'
+        reply: researchedState.summary,
+        suggestedQuestions: [
+          'What are the key discussion points?',
+          'Tell me more about the attendees',
+          'What were the previous meetings about?'
+        ],
+        type: 'meeting_preparation_complete',
+        hasCompanyResearch: !!researchedState.externalResearch?.companyNews,
+        hasAttendeeResearch: !!researchedState.externalResearch?.contactUpdates,
+        hasPreviousMeetings: !!(researchedState.previousMeetingsByProject && 
+                             Object.values(researchedState.previousMeetingsByProject)[0]?.length > 0)
       });
+
+      // Line removed as it's no longer needed
+    }
+
+    // If we get here, something went wrong
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to process meeting information'
+    });
+
+  } catch (error) {
+    console.error('Error in meeting request handler:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Meeting processing failed',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
+// Chat-specific research pipeline function
+async function runFullResearchPipeline(initialState: GraphState): Promise<GraphState> {
+  console.log('\nStarting full research pipeline for chat-initiated meeting...');
+  console.log('='.repeat(60));
+  
+  try {
+    if (!initialState.calendarEvents || initialState.calendarEvents.length === 0) {
+      console.log('No calendar events in state - pipeline aborted');
+      throw new Error('No calendar events found');
+    }
+
+    const currentEvent = initialState.calendarEvents[0];
+    console.log(`Processing: ${currentEvent.summary}`);
+    console.log(`Attendees: ${currentEvent.attendees.join(', ')}`);
+
+    // Step 1: Search for previous meetings
+    console.log('Searching previous meetings...');
+    const results = await searchPreviousMeetings(currentEvent.summary, currentEvent.startTime);
+    
+    const convertedMeetings: RetrievedMeeting[] = results.map((doc: { metadata: any; pageContent: any; }) => {
+      const { metadata, pageContent } = doc;
+      return {
+        metadata: {
+          summary: metadata.summary ?? '',
+          startTime: metadata.startTime ?? '',
+        },
+        pageContent,
+      };
+    });
+
+    initialState.previousMeetingsByProject = {
+      [currentEvent.summary]: convertedMeetings
+    };
+
+    console.log(`Found ${convertedMeetings.length} related previous meetings`);
+
+    // Step 2: External company research (Tavily)
+    console.log('Conducting external company research...');
+    try {
+      const researchedState = await prepareTavilyInputAgent(initialState);
+      initialState.externalResearch = researchedState.externalResearch;
+      console.log('External company research completed');
+      
+      if (researchedState.externalResearch?.searchQuery) {
+        console.log(`Search: ${researchedState.externalResearch.searchQuery}`);
+        const newsLength = researchedState.externalResearch.companyNews?.length || 0;
+        console.log(`Company Data: ${newsLength} characters`);
+      }
+    } catch (error) {
+      console.error('External company research failed:', error);
+    }
+
+    // Step 3: Enhanced attendee research (Hunter.io + AI)
+    console.log('Conducting enhanced attendee research...');
+    try {
+      const hunterApiKey = process.env.HUNTER_API_KEY;
+      let researchState;
+      
+      if (hunterApiKey && !hunterApiKey.startsWith("your_hunter_api_key")) {
+        console.log('Using Hunter.io + AI research...');
+        researchState = await conductHunterResearch(initialState);
+      } else {
+        console.log('Using AI-only research (Hunter.io not configured)...');
+        researchState = await conductLinkedInResearch(initialState);
+      }
+      
+      // Merge research results
+      initialState.externalResearch = {
+        searchQuery: researchState.externalResearch?.searchQuery || initialState.externalResearch?.searchQuery || '',
+        companyNews: researchState.externalResearch?.companyNews || initialState.externalResearch?.companyNews || '',
+        contactUpdates: researchState.externalResearch?.contactUpdates || initialState.externalResearch?.contactUpdates || '',
+      };
+      
+      console.log('Attendee research completed');
+      
+      const contactLength = researchState.externalResearch?.contactUpdates?.length || 0;
+      const isHunterData = researchState.externalResearch?.contactUpdates?.includes('Hunter.io') || false;
+      console.log(`Attendee Data: ${contactLength} characters ${isHunterData ? '(Hunter.io verified)' : '(AI analysis)'}`);
+    } catch (error) {
+      console.error('Attendee research failed:', error);
+    }
+
+    // Step 4: Generate comprehensive meeting summary
+    console.log('Generating comprehensive AI meeting summary...');
+    try {
+      const summaryState = await generateMeetingSummary(initialState);
+      initialState.summary = summaryState.summary;
+      console.log(`Comprehensive summary generated (${summaryState.summary?.length || 0} characters)`);
+      
+      // Show data sources used
+      const hasCompanyNews = (initialState.externalResearch?.companyNews?.length || 0) > 50;
+      const hasAttendeeData = initialState.externalResearch?.contactUpdates && 
+        !initialState.externalResearch.contactUpdates.includes('skipped');
+      const hasPreviousMeetings = convertedMeetings.length > 0;
+      const isHunterEnhanced = initialState.externalResearch?.contactUpdates?.includes('Hunter.io') || false;
+      
+      console.log(`Data sources: Company news: ${hasCompanyNews ? 'Yes' : 'No'}, Attendee profiles: ${hasAttendeeData ? (isHunterEnhanced ? 'Hunter.io' : 'AI') : 'No'}, Previous meetings: ${hasPreviousMeetings ? 'Yes' : 'No'}`);
+      
+    } catch (error) {
+      console.error('Summary generation failed:', error);
+      throw error;
+    }
+
+    console.log(`Full research pipeline completed for: ${currentEvent.summary}`);
+    console.log('='.repeat(60));
+
+    return initialState;
+
+  } catch (error) {
+    console.error('Full research pipeline failed:', error);
+    throw error;
+  }
+}
+
+async function handleRagQuery(message: string, res: Response): Promise<Response> {
+  console.log('🔍 Processing RAG query...');
+  
+  try {
+    const { generateResponse } = await import('./agents/ragAgent.js');
+    const ragResponse = await generateResponse(message);
+    
+    return res.json({
+      success: true,
+      reply: ragResponse.answer,
+      suggestedQuestions: ragResponse.suggestedQuestions,
+      sources: ragResponse.sources,
+      type: 'rag_response'
+    });
+  } catch (error) {
+    console.error('❌ Error in RAG query handler:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'RAG query failed',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
+async function handleSummarySearch(message: string, res: Response): Promise<Response> {
+  console.log('📚 Processing summary search...');
+  
+  try {
+    const { searchDocuments } = await import('./embeddings/embedAndStore.js');
+    const summaries = await searchDocuments(message);
+    
+    if (summaries && summaries.length > 0) {
+      const latestSummary = summaries[0];
+      console.log('📚 Found relevant meeting summaries:', summaries.length);
+      return res.json({
+        success: true,
+        reply: `Here's what I found about the ${latestSummary.metadata.client_name || ''} ${latestSummary.metadata.project_name || ''} meeting:\n\n${latestSummary.description}`,
+        suggestedQuestions: [
+          'Do you have any follow-up questions?',
+          'Get summary for new client?',
+          'Search for related meetings?'
+        ],
+        type: 'existing_summary',
+        summaries: summaries
+      });
+    } else {
+      return res.json({
+        success: true,
+        reply: "I couldn't find any relevant meeting summaries for that search. Would you like to prepare a summary for a new meeting?",
+        suggestedQuestions: [
+          'Get summary for new client?',
+          'Search for something else?'
+        ],
+        type: 'no_results'
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error in summary search handler:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Summary search failed',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
+// Optimized Chat endpoint with efficient routing
+app.post('/api/chat', async (req, res) => {
+  console.log('📝 Chat request received:', req.body);
+  
+  const { message, context, sessionId = 'default' } = req.body;
+
+  if (!message) {
+    return res.status(400).json({
+      success: false,
+      error: 'Message is required'
+    });
+  }
+
+  try {
+    // Route the message using our efficient router
+    const route = chatRouter.route(message, sessionId);
+    console.log(`🔄 Routing to: ${route} for session: ${sessionId}`);
+    
+    // Handle based on route
+    switch (route) {
+      case 'meeting_collection':
+        return await handleMeetingRequest(message, context, sessionId, res);
+      
+      case 'summary_search':
+        return await handleSummarySearch(message, res);
+      
+      case 'rag_search':
+        return await handleRagQuery(message, res);
+      
+      default:
+        return res.status(400).json({
+          success: false,
+          error: 'Unknown request type'
+        });
     }
 
   } catch (error) {
     console.error('❌ Error in chat endpoint:', error);
-    res.status(500).json({ 
-      success: false, 
+    
+    // Clean up session on error
+    clearConversationState(sessionId);
+    
+    return res.status(500).json({
+      success: false,
       error: 'Chat processing failed',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
+
+// Debug endpoint to check session state
+app.get('/api/debug/session/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const isActive = isActiveSession(sessionId);
+  const state = getConversationState(sessionId);
+  
+  res.json({
+    sessionId,
+    isActive,
+    state: state || null
+  });
+});
+
+// Clear session endpoint
+app.delete('/api/session/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  clearConversationState(sessionId);
+  res.json({ success: true, message: `Session ${sessionId} cleared` });
+});
+
+// NEW: Test Hunter.io endpoint for debugging
+app.post('/api/test-hunter', async (req, res) => {
+  const { email } = req.body;
+  
+  if (!email) {
+    return res.status(400).json({
+      success: false,
+      error: 'Email is required'
+    });
+  }
+
+  try {
+    console.log(`Testing Hunter.io research for: ${email}`);
+    const { runStandaloneHunterResearch } = await import('./agents/linkedinAgent.js');
+    const result = await runStandaloneHunterResearch(email);
+    
+    return res.json({
+      success: true,
+      result,
+      hasHunterData: !!(result.hunterData || result.companyData),
+      confidence: result.hunterData?.confidence || 'N/A'
+    });
+  } catch (error) {
+    console.error('Hunter.io test failed:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Hunter.io test failed',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// NEW: Pipeline status tracking
+let pipelineStatus = {
+  running: false,
+  currentMeeting: null as string | null,
+  startTime: null as Date | null,
+  lastUpdate: null as Date | null,
+  step: null as string | null,
+  error: null as string | null
+};
+
+// NEW: Pipeline status endpoint
+app.get('/api/pipeline-status', (req, res) => {
+  res.json({
+    ...pipelineStatus,
+    duration: pipelineStatus.startTime ? Date.now() - pipelineStatus.startTime.getTime() : null
+  });
+});
+
+// NEW: Update pipeline status helper
+function updatePipelineStatus(step: string, meetingName?: string, error?: string) {
+  pipelineStatus.running = !error && step !== 'completed';
+  pipelineStatus.currentMeeting = meetingName || pipelineStatus.currentMeeting;
+  pipelineStatus.lastUpdate = new Date();
+  pipelineStatus.step = step;
+  pipelineStatus.error = error || null;
+  
+  if (step === 'started') {
+    pipelineStatus.startTime = new Date();
+  } else if (step === 'completed' || error) {
+    // Keep the start time for duration calculation but stop the timer
+  }
+}
+
 // Start the server
 const PORT = process.env.PORT || 3001;
 app.listen(parseInt(process.env.PORT || '3001'), () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📋 Available endpoints:`);
   console.log(`   GET  /api/health - Health check`);
+  console.log(`   GET  /api/config-status - Check API configuration`);
   console.log(`   GET  /api/auth-url - Get Google OAuth URL`);
   console.log(`   GET  /api/oauth2callback - OAuth callback`);
   console.log(`   POST /api/start-pipeline - Start pipeline manually`);
-  console.log(`   POST /api/chat - Chat-based meeting preparation`);
+  console.log(`   POST /api/chat - Optimized chat-based meeting preparation`);
+  console.log(`   POST /api/test-hunter - Test Hunter.io integration`);
+  console.log(`   GET  /api/debug/session/:sessionId - Debug session state`);
+  console.log(`   DELETE /api/session/:sessionId - Clear session`);
+  
+  // Show configuration status on startup
+  console.log(`\n📊 API Configuration Status:`);
+  const hasHunter = process.env.HUNTER_API_KEY && !process.env.HUNTER_API_KEY.startsWith("your_hunter_api_key");
+  const hasOpenAI = process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.startsWith("your_api_key");
+  const hasTavily = process.env.TAVILY_API_KEY && !process.env.TAVILY_API_KEY.startsWith("your_tavily_api_key");
+  const hasGemini = process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith("your_gemini_api_key");
+  
+  console.log(`   Hunter.io: ${hasHunter ? '✅ Configured' : '❌ Not configured'}`);
+  console.log(`   OpenAI: ${hasOpenAI ? '✅ Configured' : '❌ Not configured'}`);
+  console.log(`   Tavily: ${hasTavily ? '✅ Configured' : '❌ Not configured'}`);
+  console.log(`   Gemini: ${hasGemini ? '✅ Configured' : '❌ Not configured'}`);
+  
+  if (!hasHunter) {
+    console.log(`\n💡 Add HUNTER_API_KEY=your_api_key_here to .env for enhanced attendee research`);
+  }
 });
 
 // Optional: Run the pipeline on startup

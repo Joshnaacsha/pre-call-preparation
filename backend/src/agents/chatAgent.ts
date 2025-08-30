@@ -9,6 +9,7 @@ dotenv.config();
 interface ChatInput {
   message: string;
   context?: string;
+  sessionId?: string;
 }
 
 interface ExtractedMeetingInfo {
@@ -18,6 +19,7 @@ interface ExtractedMeetingInfo {
   goal: string | null;
   attendees: string[];
   skippedFields: string[];
+  lastQuestion?: string;
 }
 
 interface ChatResponse {
@@ -27,29 +29,124 @@ interface ChatResponse {
   followUpQuestion?: string;
 }
 
-// Store conversation state - in production, use Redis or database
-const conversationState = new Map<string, ExtractedMeetingInfo>();
+// Session states for efficient routing
+enum SessionState {
+  IDLE = 'idle',
+  COLLECTING_INFO = 'collecting_info',
+  PROCESSING = 'processing'
+}
+
+interface ConversationContext {
+  state: SessionState;
+  extractedInfo: ExtractedMeetingInfo;
+  requiredFields: string[];
+  completedFields: string[];
+  lastUpdated: Date;
+}
+
+// Store conversation contexts - in production, use Redis or database
+const conversationContexts = new Map<string, ConversationContext>();
+
+// Session cleanup - remove old sessions after 30 minutes of inactivity
+const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+setInterval(() => {
+  const now = new Date();
+  for (const [sessionId, context] of conversationContexts.entries()) {
+    if (now.getTime() - context.lastUpdated.getTime() > SESSION_TIMEOUT) {
+      conversationContexts.delete(sessionId);
+      console.log(`🧹 Cleaned up expired session: ${sessionId}`);
+    }
+  }
+}, 5 * 60 * 1000); // Check every 5 minutes
+
+/**
+ * Get or create conversation context for a session
+ */
+function getOrCreateContext(sessionId: string): ConversationContext {
+  if (!conversationContexts.has(sessionId)) {
+    conversationContexts.set(sessionId, {
+      state: SessionState.IDLE,
+      extractedInfo: {
+        clientName: null,
+        projectName: null,
+        dateTime: null,
+        goal: null,
+        attendees: [],
+        skippedFields: []
+      },
+      requiredFields: ['clientName', 'projectName', 'dateTime', 'attendees'],
+      completedFields: [],
+      lastUpdated: new Date()
+    });
+  }
+  
+  const context = conversationContexts.get(sessionId)!;
+  context.lastUpdated = new Date();
+  return context;
+}
+
+/**
+ * Update conversation context
+ */
+function updateContext(sessionId: string, updates: Partial<ConversationContext>): void {
+  const context = getOrCreateContext(sessionId);
+  Object.assign(context, updates);
+  context.lastUpdated = new Date();
+}
+
+/**
+ * Check if message indicates intent to prepare a meeting
+ */
+function isMeetingPreparationIntent(message: string): boolean {
+  const msg = message.toLowerCase().trim();
+  
+  // Compiled regex for efficiency
+  const meetingPatterns = /\b(prepare|meeting|client|tomorrow|today|next week|schedule|brief|get summary)\b/i;
+  const newClientPattern = /new client/i;
+  
+  return meetingPatterns.test(msg) || newClientPattern.test(msg);
+}
+
+/**
+ * Check if user is expressing uncertainty
+ */
+function isUncertainResponse(message: string): boolean {
+  const uncertaintyPatterns = /\b(not sure|maybe|probably|don't know|unsure|unknown|can't tell|uncertain|possible|might be)\b/i;
+  return uncertaintyPatterns.test(message.toLowerCase());
+}
 
 /**
  * Process chat input and extract meeting information with context awareness
  */
 async function processChatInput(input: ChatInput, sessionId: string = 'default'): Promise<ChatResponse> {
+  const context = getOrCreateContext(sessionId);
+  const message = input.message.toLowerCase();
+  const isUncertain = isUncertainResponse(input.message);
+
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
   const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-  // Get existing context from conversation state
-  const existingInfo = conversationState.get(sessionId) || {
-    clientName: null,
-    projectName: null,
-    dateTime: null,
-    goal: null,
-    attendees: [],
-    skippedFields: []
+  // Get existing info from context
+    const existingInfo = {
+    ...context.extractedInfo,
+    // If a field is already set, don't lose it
+    clientName: context.extractedInfo.clientName || null,
+    projectName: context.extractedInfo.projectName || null,
+    dateTime: context.extractedInfo.dateTime || null,
+    goal: context.extractedInfo.goal || null,
+    attendees: [...(context.extractedInfo.attendees || [])],
+    skippedFields: [...(context.extractedInfo.skippedFields || [])]
   };
 
-  const currentTime = new Date().toISOString();
+  // If the response expresses uncertainty, mark appropriate field as skipped
+  if (isUncertain) {
+    const lastQuestion = existingInfo.lastQuestion;
+    if (lastQuestion?.startsWith('Who else')) {
+      existingInfo.skippedFields.push('attendees');
+    }
+  }
 
-  // If goal exists and projectName doesn't, use goal as projectName
+  const currentTime = new Date().toISOString();  // If goal exists and projectName doesn't, use goal as projectName
   if (!existingInfo.projectName && existingInfo.goal) {
     existingInfo.projectName = existingInfo.goal;
   }
@@ -70,7 +167,9 @@ async function processChatInput(input: ChatInput, sessionId: string = 'default')
 
     CRITICAL RULES:
     1. ALWAYS preserve existing information unless user explicitly changes it
-    2. If user says "I don't know", "not sure", "unsure" about a field, add it to skippedFields using exact field names: "clientName", "projectName", "dateTime", "goal", "attendees"
+    2. If user gives any form of uncertain response ("I don't know", "not sure", "unsure", "unknown", "maybe", "probably", etc.) 
+       or expresses uncertainty about a field, IMMEDIATELY add it to skippedFields using exact field names: 
+       "clientName", "projectName", "dateTime", "goal", "attendees"
     3. NEVER ask for fields that are in skippedFields
     4. Parse new information intelligently:
        - Company names like "Ford", "Microsoft" = clientName
@@ -105,21 +204,48 @@ async function processChatInput(input: ChatInput, sessionId: string = 'default')
 
     const parsedResponse = JSON.parse(rawText);
     
-    // Build the complete response
-    const extractedInfo = parsedResponse.extractedInfo;
+    // Build the complete response, merging with existing info
+    const extractedInfo = {
+      ...existingInfo,  // Keep existing values as base
+      ...parsedResponse.extractedInfo,  // Override with new values
+      // Merge arrays properly
+      attendees: [...new Set([...existingInfo.attendees, ...(parsedResponse.extractedInfo.attendees || [])])],
+      skippedFields: [...new Set([...existingInfo.skippedFields, ...(parsedResponse.extractedInfo.skippedFields || [])])]
+    };
     
-    // Update conversation state immediately
-    conversationState.set(sessionId, extractedInfo);
+    // Update conversation context immediately
+    context.extractedInfo = extractedInfo;
+    updateContext(sessionId, { extractedInfo });
 
-    // Calculate truly missing fields (excluding skipped ones and using goal as project name if needed)
+    // Calculate truly missing fields
     const missingFields = [];
     const skipped = extractedInfo.skippedFields || [];
+
+    // Mark field as skipped if uncertainty is expressed
+    if (isUncertain) {
+      if (!extractedInfo.clientName && !skipped.includes('clientName')) {
+        skipped.push('clientName');
+      }
+      if (!extractedInfo.projectName && !extractedInfo.goal && !skipped.includes('projectName')) {
+        skipped.push('projectName');
+      }
+      if (!extractedInfo.dateTime && !skipped.includes('dateTime')) {
+        skipped.push('dateTime');
+      }
+      if (!extractedInfo.goal && !skipped.includes('goal')) {
+        skipped.push('goal');
+      }
+      if (extractedInfo.attendees.length === 0 && !skipped.includes('attendees')) {
+        skipped.push('attendees');
+      }
+    }
 
     // If projectName is not provided but goal is, use goal as projectName
     if (!extractedInfo.projectName && extractedInfo.goal) {
       extractedInfo.projectName = extractedInfo.goal;
     }
-    
+  
+    // Update missing fields list (after marking uncertain fields as skipped)
     if (!extractedInfo.clientName && !skipped.includes('clientName')) {
       missingFields.push('clientName');
     }
@@ -167,9 +293,9 @@ function generateSmartFollowUpQuestion(missingFields: string[]): string {
   const questions: { [key: string]: string } = {
     clientName: "Who's the client?",
     projectName: "What's the project about?",
-    dateTime: "When is the meeting?",
-    goal: "What's the purpose?",
-    attendees: "Who else will be there?"
+    dateTime: "When is the meeting scheduled?",
+    goal: "What's the purpose of the meet?",
+    attendees: "Could you tell me who else will be attending? (Or say 'not sure' if unknown)"
   };
 
   if (missingFields.length === 1) {
@@ -254,67 +380,37 @@ function convertToGraphState(info: ExtractedMeetingInfo): GraphState {
  * Clear conversation state
  */
 export function clearConversationState(sessionId: string = 'default'): void {
-  conversationState.delete(sessionId);
+  conversationContexts.delete(sessionId);
 }
 
 /**
  * Get current conversation state
  */
 export function getConversationState(sessionId: string = 'default'): ExtractedMeetingInfo | undefined {
-  return conversationState.get(sessionId);
+  const context = conversationContexts.get(sessionId);
+  return context?.extractedInfo;
 }
 
 /**
- * Get the latest generated summary for a meeting
+ * Check if session is actively collecting meeting info
  */
-async function getLatestSummary(meetingSummary: string): Promise<string | null> {
-  try {
-    const { promises: fs } = await import('fs');
-    const path = await import('path');
-    
-    const summariesDir = path.join(process.cwd(), 'summaries');
-    
-    // Check if summaries directory exists
-    try {
-      await fs.access(summariesDir);
-    } catch {
-      console.log('📁 Summaries directory not found');
-      return null;
-    }
+export function isActiveSession(sessionId: string = 'default'): boolean {
+  const context = conversationContexts.get(sessionId);
+  return context?.state === SessionState.COLLECTING_INFO;
+}
 
-    // Read all files in summaries directory
-    const files = await fs.readdir(summariesDir);
-    
-    // Filter for markdown files that match the meeting
-    const cleanMeetingName = meetingSummary
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-    
-    const matchingFiles = files.filter((file: string) => 
-      file.startsWith('briefing-') && 
-      file.includes(cleanMeetingName) && 
-      file.endsWith('.md')
-    );
+/**
+ * Start a new meeting preparation session
+ */
+export function startMeetingSession(sessionId: string = 'default'): void {
+  updateContext(sessionId, { state: SessionState.COLLECTING_INFO });
+}
 
-    if (matchingFiles.length === 0) {
-      console.log(`📄 No summary file found for: ${meetingSummary}`);
-      return null;
-    }
-
-    // Get the most recent file (sort by filename which includes timestamp)
-    const latestFile = matchingFiles.sort().reverse()[0];
-    const filePath = path.join(summariesDir, latestFile);
-    
-    console.log(`📖 Reading summary file: ${latestFile}`);
-    const summaryContent = await fs.readFile(filePath, 'utf-8');
-    
-    return summaryContent;
-  } catch (error) {
-    console.error('Error reading summary file:', error);
-    return null;
-  }
+/**
+ * Check if message is a meeting preparation intent
+ */
+export function isMeetingIntent(message: string): boolean {
+  return isMeetingPreparationIntent(message);
 }
 
 /**
@@ -329,78 +425,105 @@ export async function handleChatRequest(
   followUpQuestion?: string;
   summary?: string; 
 }> {
-  const chatResponse = await processChatInput(input, sessionId);
+  // Process the chat input first
+  const response = await processChatInput(input, sessionId);
+  const info = response.extractedInfo;
 
-  if (chatResponse.needsMoreInfo) {
+  // Helper to check if a field should be considered "complete"
+  const isFieldComplete = (field: string): boolean => {
+    if (info.skippedFields.includes(field)) {
+      console.log(`📝 Field "${field}" marked as skipped`);
+      return true;
+    }
+    
+    switch(field) {
+      case 'clientName':
+        return !!info.clientName;
+      case 'projectName':
+        return !!(info.projectName || info.goal);
+      case 'goal':
+        return !!(info.goal || info.projectName);
+      case 'dateTime':
+        return !!info.dateTime;
+      case 'attendees':
+        return info.attendees.length > 0 || info.skippedFields.includes('attendees');
+      default:
+        return false;
+    }
+  };
+
+  // Check if all required fields are either filled or skipped
+  const requiredFields = ['clientName', 'projectName', 'dateTime', 'attendees'];
+  const nextMissingField = requiredFields.find(field => !isFieldComplete(field));
+
+  // If we still need more info, ask the next question
+  if (nextMissingField) {
+    console.log(`🔍 Missing field: ${nextMissingField}`);
+    // Keep session active
+    updateContext(sessionId, { state: SessionState.COLLECTING_INFO });
     return {
       graphState: null,
       needsMoreInfo: true,
-      followUpQuestion: chatResponse.followUpQuestion
+      followUpQuestion: generateSmartFollowUpQuestion([nextMissingField])
     };
   }
 
-  const graphState = convertToGraphState(chatResponse.extractedInfo);
-  
-  // Store in database
+  // All fields are complete or skipped, proceed with storing and generating summary
+  updateContext(sessionId, { state: SessionState.PROCESSING });
+  const graphState = convertToGraphState(info);
+
   try {
+    // Store in database
     const event = {
-      summary: `${chatResponse.extractedInfo.clientName || 'Meeting'} - ${chatResponse.extractedInfo.projectName || 'Discussion'}`,
-      description: chatResponse.extractedInfo.goal || '',
+      summary: `${info.clientName || 'Meeting'} - ${info.projectName || info.goal || 'Discussion'}`,
+      description: info.goal || '',
       startTime: graphState.calendarEvents[0].startTime,
-      attendees: chatResponse.extractedInfo.attendees,
+      attendees: info.attendees,
       location: '',
       metadata: {
-        client_name: chatResponse.extractedInfo.clientName,
-        project_name: chatResponse.extractedInfo.projectName,
+        client_name: info.clientName,
+        project_name: info.projectName || info.goal,
+        meeting_goal: info.goal,
         session_id: sessionId,
-        final_state: true
+        final_state: true,
+        skipped_fields: info.skippedFields
       }
     };
+
     await embedAndStoreEvent(event);
     console.log('📊 Successfully stored meeting data');
-  } catch (error) {
-    console.error('Failed to store chat data:', error);
-  }
 
-  // Clear state after success
-  conversationState.delete(sessionId);
-  
-  // Try to get the generated summary after pipeline completion
-  let summary: string | null = null;
-  try {
-    const meetingTitle = `${chatResponse.extractedInfo.clientName || 'Meeting'} - ${chatResponse.extractedInfo.projectName || 'Discussion'}`;
-    console.log(`🔍 Looking for generated summary for: ${meetingTitle}`);
+    // Generate summary using the main pipeline
+    const { generateMeetingSummary } = await import('./summaryGenarationAgent.js');
+    const summaryState = await generateMeetingSummary(graphState);
     
-    // Wait longer for the pipeline to complete file generation (increased from 1 second to 3 seconds)
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    summary = await getLatestSummary(meetingTitle);
-    
-    if (summary) {
-      console.log(`✅ Summary retrieved successfully (${summary.length} characters)`);
-    } else {
-      console.log('⚠️ No summary found after pipeline completion');
+    if (summaryState.summary) {
+      // Clear conversation state since we're done
+      clearConversationState(sessionId);
       
-      // Try one more time with a longer wait
-      console.log('🔄 Retrying summary retrieval after additional wait...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      summary = await getLatestSummary(meetingTitle);
-      
-      if (summary) {
-        console.log(`✅ Summary retrieved on retry (${summary.length} characters)`);
-      } else {
-        console.log('❌ Summary still not found after retry');
-      }
+      return {
+        graphState,
+        needsMoreInfo: false,
+        summary: summaryState.summary
+      };
     }
+
+    // If we get here, something went wrong with summary generation
+    console.error('❌ Failed to generate summary');
+    return {
+      graphState: null,
+      needsMoreInfo: true,
+      followUpQuestion: "I'm sorry, there was an error processing your request. Could you try again?"
+    };
+    
   } catch (error) {
-    console.error('Error retrieving summary:', error);
+    console.error('❌ Failed to process meeting:', error);
+    return {
+      graphState: null,
+      needsMoreInfo: true,
+      followUpQuestion: "I'm sorry, there was an error processing your request. Could you try again?"
+    };
   }
-  
-  return {
-    graphState,
-    needsMoreInfo: false,
-    summary: summary || undefined
-  };
 }
 
 // API types
