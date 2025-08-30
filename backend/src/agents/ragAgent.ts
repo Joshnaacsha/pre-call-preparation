@@ -17,26 +17,52 @@ export interface RAGResponse {
   }[];
 }
 
-export async function generateResponse(query: string): Promise<RAGResponse> {
+export async function generateResponse(query: string, clientFilter?: string): Promise<RAGResponse> {
   // Search for relevant documents
-  const documents = await searchDocuments(query);
-  
+  const documents = await searchDocuments(query, undefined, clientFilter);
   if (!documents || documents.length === 0) {
     console.log('📚 No documents found in database, attempting web search...');
     return await fallbackToWebSearch(query);
   }
 
-  // Build context from retrieved documents
-  const context = documents.map(doc => {
-    const date = doc.start_time ? new Date(doc.start_time).toLocaleDateString() : 'Date not specified';
-    const content = doc.description || doc.content || '';
-    return `
-Meeting Summary: ${doc.metadata?.client_name || ''} - ${doc.metadata?.project_name || ''}
-Date: ${date}
+  // Sort documents by date and organize by client
+  const sortedDocs = documents.sort((a, b) => {
+    const dateA = a.start_time ? new Date(a.start_time).getTime() : 0;
+    const dateB = b.start_time ? new Date(b.start_time).getTime() : 0;
+    return dateB - dateA; // Most recent first
+  });
+
+  // Group by client
+  const clientGroups = new Map<string, typeof documents>();
+  sortedDocs.forEach(doc => {
+    const clientName = doc.metadata?.client_name || 'Unknown Client';
+    if (!clientGroups.has(clientName)) {
+      clientGroups.set(clientName, []);
+    }
+    clientGroups.get(clientName)!.push(doc);
+  });
+
+  // Build organized context
+  const context = Array.from(clientGroups.entries()).map(([clientName, clientDocs]) => {
+    const meetingSummaries = clientDocs.map(doc => {
+      const date = doc.start_time ? new Date(doc.start_time).toLocaleDateString() : 'Date not specified';
+      const content = doc.description || doc.content || '';
+      return `
+Meeting Date: ${date}
+Project: ${doc.metadata?.project_name || 'Not specified'}
 Type: ${doc.metadata?.meeting_goal || 'Not specified'}
 Key Points:
-${content}
----`;
+${content}`;
+    }).join('\n\n---\n\n');
+
+    return `
+CLIENT: ${clientName}
+TOTAL MEETINGS: ${clientDocs.length}
+LATEST INTERACTION: ${clientDocs[0].start_time ? new Date(clientDocs[0].start_time).toLocaleDateString() : 'Unknown'}
+
+MEETING HISTORY:
+${meetingSummaries}
+==========`;
   }).join('\n\n');
   
   console.log('📚 Using context from', documents.length, 'documents');
@@ -46,6 +72,9 @@ ${content}
 You are an AI assistant helping with meeting preparation and follow-up questions.
 Your task is to answer questions based on the meeting summaries provided in the context.
 
+The context below is organized by client, with meetings sorted from newest to oldest.
+Each client section shows total number of meetings and latest interaction date.
+
 Context from previous meetings and summaries:
 ${context}
 
@@ -53,10 +82,14 @@ Question: "${query}"
 
 Instructions:
 1. Answer based ONLY on information present in the context above
-2. If the exact information isn't in the context, say so clearly
-3. Focus on facts from the meetings, not general knowledge
-4. For questions about recent updates, prioritize information from newer meetings
-5. Keep answers concise and specific to what was discussed in meetings
+2. When discussing meetings, ALWAYS specify:
+   - The client name
+   - The exact meeting date
+   - The total number of meetings with that client
+3. If asked about a specific client, first state how many meetings we've had with them
+4. For questions about "previous meetings", list each meeting date separately
+5. If the exact information isn't in the context, say so clearly
+6. Focus on facts from the meetings, not general knowledge
 
 Generate your response in this exact format:
 ANSWER: (2-3 sentences directly answering the question, based solely on meeting context)

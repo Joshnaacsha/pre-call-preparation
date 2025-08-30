@@ -59,6 +59,63 @@ class ChatRouter {
   // Intent classification cache for performance
   private intentCache = new Map<string, string>();
   private readonly MAX_CACHE_SIZE = 100;
+  // Store last query context
+  private lastQueryContext = new Map<string, {
+    timestamp: number;
+    query: string;
+    client?: string;
+    topic?: string;
+  }>();
+
+  /**
+   * Get the context of the last query for a session
+   */
+  getLastQueryContext(sessionId: string) {
+    return this.lastQueryContext.get(sessionId);
+  }
+
+  /**
+   * Extract client name from message
+   */
+  extractClient(message: string): string | undefined {
+    // Common company names and known clients
+    const companies = ['ford', 'acme', 'apple', 'meta', 'zomato'];
+    const lowercaseMsg = message.toLowerCase();
+    
+    for (const company of companies) {
+      if (lowercaseMsg.includes(company)) {
+        return company;
+      }
+    }
+
+    // Try to find client name from context
+    const words = lowercaseMsg.split(/\s+/);
+    const clientIndex = words.findIndex(w => 
+      w === 'client' || w === 'company' || w === 'customer'
+    );
+    
+    if (clientIndex >= 0 && clientIndex < words.length - 1) {
+      return words[clientIndex + 1];
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Extract main topic from message
+   */
+  private extractTopic(message: string): string | undefined {
+    const topics = ['meeting', 'discussion', 'call', 'review', 'migration', 'cloud', 'requirements'];
+    const lowercaseMsg = message.toLowerCase();
+    
+    for (const topic of topics) {
+      if (lowercaseMsg.includes(topic)) {
+        return topic;
+      }
+    }
+
+    return undefined;
+  }
 
   /**
    * Route incoming message to appropriate handler
@@ -69,6 +126,35 @@ class ChatRouter {
       return 'meeting_collection';
     }
 
+    // Check if this is a follow-up question
+    const lastContext = this.lastQueryContext.get(sessionId);
+    const isFollowUp = lastContext && 
+      (Date.now() - lastContext.timestamp < 5 * 60 * 1000) && // Within 5 minutes
+      (
+        // Questions about previous context
+        message.toLowerCase().includes('what') ||
+        message.toLowerCase().includes('when') ||
+        message.toLowerCase().includes('why') ||
+        message.toLowerCase().includes('how') ||
+        message.toLowerCase().includes('who') ||
+        message.toLowerCase().includes('where') ||
+        message.toLowerCase().includes('then') ||
+        message.toLowerCase().includes('discuss') ||
+        message.toLowerCase().includes('talk') ||
+        message.toLowerCase().includes('about') ||
+        message.toLowerCase().startsWith('and') ||
+        // Pronouns referring to previous context
+        message.toLowerCase().includes('it') ||
+        message.toLowerCase().includes('they') ||
+        message.toLowerCase().includes('them') ||
+        message.toLowerCase().includes('their') ||
+        message.toLowerCase().includes('that') ||
+        message.toLowerCase().includes('those') ||
+        message.toLowerCase().includes('these') ||
+        /^[^.!?]*\?$/.test(message) || // Ends with question mark
+        message.length < 60 // Short messages are likely follow-ups
+      );
+
     // Check intent with caching
     const intent = this.classifyIntent(message);
     
@@ -77,11 +163,35 @@ class ChatRouter {
       return 'meeting_collection';
     }
 
-    if (intent === 'summary_search') {
-      return 'summary_search';
+    let currentClient = this.extractClient(message);
+    let currentTopic = this.extractTopic(message);
+
+    // If this is a follow-up question, inherit context from last query
+    if (isFollowUp && lastContext) {
+      currentClient = currentClient || lastContext.client;
+      currentTopic = currentTopic || lastContext.topic;
     }
 
-    return 'rag_search';
+    // Store context for the current query
+    this.lastQueryContext.set(sessionId, {
+      timestamp: Date.now(),
+      query: message,
+      client: currentClient,
+      topic: currentTopic
+    });
+
+    // Always use RAG search for:
+    // 1. Follow-up questions (to maintain context)
+    // 2. Questions about specific companies
+    // 3. Questions about meetings or discussions
+    if (isFollowUp || currentClient || 
+        message.toLowerCase().includes('meet') || 
+        message.toLowerCase().includes('discuss') ||
+        message.toLowerCase().includes('talk')) {
+      return 'rag_search';
+    }
+
+    return intent === 'summary_search' ? 'summary_search' : 'rag_search';
   }
 
   /**
@@ -743,12 +853,34 @@ async function runFullResearchPipeline(initialState: GraphState): Promise<GraphS
   }
 }
 
-async function handleRagQuery(message: string, res: Response): Promise<Response> {
+async function handleRagQuery(message: string, res: Response, sessionId: string = 'default'): Promise<Response> {
   console.log('🔍 Processing RAG query...');
   
   try {
     const { generateResponse } = await import('./agents/ragAgent.js');
-    const ragResponse = await generateResponse(message);
+
+    // Extract client from current message
+    const currentClient = chatRouter.extractClient(message);
+
+    // Get context from last query if it exists
+    const lastContext = chatRouter.getLastQueryContext(sessionId);
+    let enhancedQuery = message;
+    
+    // Use current client or inherit from context
+    const clientContext = currentClient || lastContext?.client;
+
+    // If this is a follow-up question and we have context, enhance the query
+    if (lastContext && Date.now() - lastContext.timestamp < 5 * 60 * 1000) {
+      if (clientContext) {
+        enhancedQuery = `${enhancedQuery} about ${clientContext}`;
+      }
+      if (lastContext.topic) {
+        enhancedQuery = `${enhancedQuery} regarding ${lastContext.topic}`;
+      }
+    }
+
+    console.log(`🔄 Enhanced query: "${enhancedQuery}"${clientContext ? ` for client: ${clientContext}` : ''}`);
+    const ragResponse = await generateResponse(enhancedQuery, clientContext);
     
     return res.json({
       success: true,
@@ -836,7 +968,7 @@ app.post('/api/chat', async (req, res) => {
         return await handleSummarySearch(message, res);
       
       case 'rag_search':
-        return await handleRagQuery(message, res);
+        return await handleRagQuery(message, res, sessionId);
       
       default:
         return res.status(400).json({

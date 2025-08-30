@@ -71,9 +71,9 @@ function formatSearchQuery(query: string): string {
 }
 
 // Search for stored documents using vector similarity search
-export async function searchDocuments(searchQuery: string, currentMeetingDate?: string) {
+export async function searchDocuments(searchQuery: string, currentMeetingDate?: string, clientFilter?: string) {
   try {
-    console.log(`🔍 Searching Supabase for: "${searchQuery}"`);
+    console.log(`🔍 Searching Supabase for: "${searchQuery}"${clientFilter ? ` for client: ${clientFilter}` : ''}`);
 
     // Generate embedding for the search query
     const queryEmbedding = await embeddings.embedQuery(searchQuery);
@@ -94,14 +94,26 @@ export async function searchDocuments(searchQuery: string, currentMeetingDate?: 
 
     // Also perform metadata search in parallel for better results
     const searchTerms = searchQuery.toLowerCase().split(/\s+/).filter(term => term.length > 2);
-    const { data: metadataMatches, error: metadataError } = await supabase
+    let query = supabase
       .from('meetings')
-      .select('*')
-      .or(searchTerms.map(term => 
-        `client_name.ilike.%${term}%,project_name.ilike.%${term}%`
-      ).join(','))
+      .select('*');
+
+    // Apply client filter if provided
+    if (clientFilter) {
+      query = query.ilike('client_name', `%${clientFilter}%`);
+    }
+
+    // Apply search terms
+    query = query.or(searchTerms.map(term => 
+      `client_name.ilike.%${term}%,project_name.ilike.%${term}%`
+    ).join(','));
+
+    // Apply date filter and limit
+    query = query
       .lt('meeting_date', currentMeetingDate || new Date().toISOString()) // Exclude current meeting and future meetings
-      .limit(5)
+      .limit(5);
+
+    const { data: metadataMatches, error: metadataError } = await query
       .then(({ data, error }) => ({
         data: data?.map(m => ({
           id: m.id,
