@@ -4,13 +4,13 @@ An AI-powered system that automatically prepares briefings for upcoming client m
 
 ## Features
 
-- 🗓️ Automatic calendar event monitoring
-- 📊 Previous meeting analysis and summarization
-- 🔍 External company research integration (via Tavily)
-- 👥 Attendee profile research
-- 📝 AI-generated meeting summaries
-- 📧 Automated PDF generation and email delivery
-- 💬 Chat interface for manual meeting preparation
+- Automatic calendar event monitoring
+- Previous meeting analysis and summarization
+- External company research integration (via Tavily)
+- Attendee profile research
+- AI-generated meeting summaries
+- Automated PDF generation and email delivery
+- Chat interface for manual meeting preparation
 
 ## Tech Stack
 
@@ -24,7 +24,6 @@ An AI-powered system that automatically prepares briefings for upcoming client m
   - TypeScript
   - Google Calendar API
   - OpenAI API
-  - Gemini API
   - Tavily API
 
 ## Prerequisites
@@ -34,7 +33,6 @@ An AI-powered system that automatically prepares briefings for upcoming client m
 - Google Cloud Platform account with Calendar API enabled
 - API keys for:
   - OpenAI
-  - Google (Gemini)
   - Tavily
 
 ## Setup
@@ -66,7 +64,6 @@ An AI-powered system that automatically prepares briefings for upcoming client m
    GOOGLE_CLIENT_ID=your-google-client-id
    GOOGLE_CLIENT_SECRET=your-google-client-secret
    GOOGLE_REDIRECT_URI=http://localhost:3001/oauth2callback
-   GEMINI_API_KEY=your-gemini-api-key
    OPENAI_API_KEY=your-openai-api-key
    TAVILY_API_KEY=your-tavily-api-key
    ```

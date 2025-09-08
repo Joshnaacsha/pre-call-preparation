@@ -1,12 +1,13 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import type { GraphState, CalendarEvent, RetrievedMeeting } from '../graph/graphState.js';
 import { embedAndStoreEvent } from '../embeddings/embedAndStore.js';
 
 dotenv.config();
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 // Simplified company metadata - only essentials
 const COMPANY_METADATA = {
@@ -37,7 +38,7 @@ interface MeetingSummary {
 
 export async function generateMeetingSummary(state: GraphState): Promise<GraphState> {
   if (!state.calendarEvents || state.calendarEvents.length === 0) {
-    console.warn('⚠️ No calendar events found for summary generation.');
+    console.warn('[Warning] No calendar events found for summary generation.');
     return {
       ...state,
       summary: 'No meeting data available for summary generation.',
@@ -50,10 +51,10 @@ export async function generateMeetingSummary(state: GraphState): Promise<GraphSt
   const externalResearch = state.externalResearch;
   const projectNotes = state.projectNotesFromDB?.[projectName] || [];
 
-  console.log('📋 Generating concise meeting summary...');
+  console.log('[Info] Generating concise meeting summary...');
 
   const meetingType = determineMeetingType(currentEvent, previousMeetings);
-  console.log(`📊 Meeting type identified: ${meetingType}`);
+  console.log(`[Info] Meeting type identified: ${meetingType}`);
 
   const prompt = `
 Create a CONCISE pre-call briefing (MAX 2 pages when printed) for a SALES AGENT focused on closing deals and advancing opportunities.
@@ -114,19 +115,21 @@ Focus on REVENUE IMPACT, not technical details. Use sales language: prospects, p
 `;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
     });
 
-    const raw = await result.response.text();
+    const raw = completion.choices[0].message.content || '';
     const parsed: MeetingSummary = JSON.parse(
       raw.trim().replace(/^```json/, '').replace(/```$/, '')
     );
 
     const formattedSummary = formatConciseSummary(parsed, currentEvent, projectName, state);
 
-    console.log('✅ Concise meeting summary generated successfully');
-    console.log('📄 Summary preview:');
+    console.log('[Success] Concise meeting summary generated successfully');
+    console.log('[Info] Summary preview:');
     console.log(formattedSummary.slice(0, 300) + '...');
 
     // Store the summary in Supabase
@@ -143,11 +146,11 @@ Focus on REVENUE IMPACT, not technical details. Use sales language: prospects, p
         }
       };
       
-      console.log('📝 Attempting to store meeting data');
+      console.log('[Info] Attempting to store meeting data');
       await embedAndStoreEvent(enhancedEvent);
-      console.log('✅ Summary stored in database');
+      console.log('[Success] Summary stored in database');
     } catch (error) {
-      console.error('❌ Failed to store summary:', {
+      console.error('[Error] Failed to store summary:', {
         error: error instanceof Error ? error.message : error,
         stack: error instanceof Error ? error.stack : undefined
       });
@@ -158,7 +161,7 @@ Focus on REVENUE IMPACT, not technical details. Use sales language: prospects, p
       summary: formattedSummary,
     };
   } catch (error) {
-    console.error('❌ Error generating meeting summary:', error);
+    console.error('[Error] Error generating meeting summary:', error);
     
     const fallbackSummary = generateFallbackSummary(currentEvent, previousMeetings, externalResearch, state);
     
@@ -216,7 +219,7 @@ function formatConciseSummary(
     state.externalResearch.contactUpdates.length > 100 &&  // Increased minimum length for more meaningful insights
     /\b(role|position|background|experience|responsibility|title)\b/i.test(state.externalResearch.contactUpdates);
 
-  return `# 💼 SALES BRIEFING: ${currentEvent.summary}
+  return `# SALES BRIEFING: ${currentEvent.summary}
 
 **Meeting:** ${date}  
 **Deal Stage:** ${summary.meetingType.toUpperCase()}  
@@ -225,24 +228,24 @@ function formatConciseSummary(
 
 ---
 
-## 🎯 PROSPECT PROFILE & QUALIFICATION
+## PROSPECT PROFILE & QUALIFICATION
 ${summary.clientContext}
 
-## 📈 DEAL HISTORY & PIPELINE STATUS
+## DEAL HISTORY & PIPELINE STATUS
 ${summary.pastEngagement}
 
 ${previousMeetings.length > 0 ? `**Sales Cycle:** ${previousMeetings.length} touchpoints completed` : '**Sales Cycle:** Initial prospecting call'}
 
 ${projectNotes.length > 0 ? `**CRM Notes:** ${projectNotes.length} entries logged` : ''}
 
-## 🔍 COMPETITIVE INTELLIGENCE & MARKET PRESSURE
+## COMPETITIVE INTELLIGENCE & MARKET PRESSURE
 ${summary.externalIntelligence
   .replace(/Hunter\.io|Hunter|research conducted|Research failed|Limited info found|No verifiable|verified data|profile yielded|limited available|AI for \d+ attendee\(s\)/gi, '')
   .replace(/\s+-\s+limited\s+.*?available\.?/gi, '')
   .replace(/\s+/g, ' ')
   .trim()}
 
-${hasAttendeeResearch && state.externalResearch?.contactUpdates ? `\n## 👥 KEY STAKEHOLDER INSIGHTS
+${hasAttendeeResearch && state.externalResearch?.contactUpdates ? `\n## KEY STAKEHOLDER INSIGHTS
 ${state.externalResearch.contactUpdates
   .replace(/Hunter\.io|Hunter|research conducted|Research failed|Limited info found|No verifiable|verified data|profile yielded|limited available|AI for \d+ attendee\(s\)/gi, '')
   .replace(/\s+-\s+limited\s+.*?available\.?/gi, '')
@@ -251,25 +254,25 @@ ${state.externalResearch.contactUpdates
 
 ---
 
-## 💡 VALUE PROPOSITIONS (Lead with ROI)
+## VALUE PROPOSITIONS (Lead with ROI)
 ${summary.talkingPoints.map((point, i) => `${i + 1}. ${point}`).join('\n')}
 
-## ❓ QUALIFYING QUESTIONS (Advance the Sale)
+## QUALIFYING QUESTIONS (Advance the Sale)
 ${summary.keyQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
 ---
 
-## ⚠️ DEAL RISKS & OBJECTION HANDLING
+## DEAL RISKS & OBJECTION HANDLING
 
 **Potential Deal Killers:** ${summary.risks.join(' • ')}
 
-## 🚀 SALES OPPORTUNITIES & EXPANSION
+## SALES OPPORTUNITIES & EXPANSION
 
 **Revenue Growth Potential:** ${summary.opportunities.join(' • ')}
 
 ---
 
-## 🏆 CPRIME COMPETITIVE ADVANTAGES
+## CPRIME COMPETITIVE ADVANTAGES
 **Core Solutions:** ${COMPANY_METADATA.coreServices.join(' | ')}  
 **Win Themes:** ${COMPANY_METADATA.keyDifferentiators.join(' • ')}
 
@@ -294,7 +297,7 @@ function generateFallbackSummary(
     externalResearch.contactUpdates !== 'No attendee profile research conducted.' &&
     !externalResearch.contactUpdates.includes('skipped');
 
-  return `# 💼 SALES BRIEFING: ${event.summary}
+  return `# SALES BRIEFING: ${event.summary}
 
 **Meeting:** ${new Date(event.startTime).toLocaleDateString('en-US', {
     weekday: 'short',
@@ -309,19 +312,19 @@ function generateFallbackSummary(
 
 ---
 
-## 🎯 PROSPECT QUALIFICATION STATUS
+## PROSPECT QUALIFICATION STATUS
 ${previousMeetings.length > 0 ? `Active opportunity (${previousMeetings.length} sales touchpoints)` : 'New prospect - qualification needed'} for ${event.summary}.
 
 ${projectNotes.length > 0 ? `**CRM Intel:** ${projectNotes.length} sales notes available` : ''}
 
-## 🔍 COMPETITIVE LANDSCAPE & URGENCY DRIVERS
+## COMPETITIVE LANDSCAPE & URGENCY DRIVERS
 ${externalResearch?.companyNews || 'Limited market intelligence available - research their recent challenges and growth initiatives.'}
 
 
-${hasAttendeeResearch ? '\n## 👥 DECISION MAKER PROFILE' : ''}
+${hasAttendeeResearch ? '\n## DECISION MAKER PROFILE' : ''}
 ${hasAttendeeResearch ? externalResearch!.contactUpdates : ''}
 
-## 💡 SALES APPROACH
+## SALES APPROACH
 • **Qualify:** Budget authority, timeline, and decision process
 • **Value Prop:** Position our ${COMPANY_METADATA.coreServices.join(' and ')} expertise  
 • **Next Steps:** Secure technical discovery or proposal presentation

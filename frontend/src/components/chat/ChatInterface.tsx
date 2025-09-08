@@ -194,7 +194,7 @@ export function ChatInterface() {
                     transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                     className="w-4 h-4"
                   >
-                    ⏳
+                    Loading...
                   </motion.div>
                 ) : (
                   <Send className="h-4 w-4" />

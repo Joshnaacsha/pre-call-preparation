@@ -1,11 +1,12 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import type { GraphState, RetrievedMeeting } from '../graph/graphState.js';
 
 dotenv.config();
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 // Interface for Tavily API response
 export interface TavilySearchResult {
@@ -111,11 +112,13 @@ Remember: Create a search query that is relevant to the CURRENT project "${proje
 `;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
     });
 
-    const raw = await result.response.text();
+    const raw = completion.choices[0].message.content || '';
     const parsed = JSON.parse(
       raw.trim().replace(/^```json/, '').replace(/```$/, '')
     );
@@ -283,11 +286,13 @@ Focus only on information relevant to "${projectName}".
 `;
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
     });
 
-    const raw = await result.response.text();
+    const raw = completion.choices[0].message.content || '';
     const parsed = JSON.parse(
       raw.trim().replace(/^```json/, '').replace(/```$/, '')
     );

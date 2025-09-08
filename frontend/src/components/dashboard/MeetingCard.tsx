@@ -33,7 +33,7 @@ export function MeetingCard({ meeting }: MeetingCardProps) {
               {meeting.title}
             </h3>
             <span className={`px-2 py-1 rounded-full text-xs font-medium ${urgencyColors[meeting.urgency]}`}>
-              {meeting.urgency === 'high' ? '🚨 < 1hr' : meeting.urgency === 'medium' ? '⏰ < 2hr' : '✅ Ready'}
+              {meeting.urgency === 'high' ? 'URGENT < 1hr' : meeting.urgency === 'medium' ? 'Soon < 2hr' : 'Ready'}
             </span>
           </div>
           

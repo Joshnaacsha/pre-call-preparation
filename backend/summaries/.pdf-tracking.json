@@ -1,20 +1,4 @@
 {
-  "b1f23b2ad331": {
-    "eventId": "b1f23b2ad331",
-    "eventHash": "42aeb236bbd2da3e6d9aff21194c666b33fa75ecc55ac8c06cdb60bebd2544e6",
-    "generatedAt": "2025-08-11T06:56:01.077Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-acme-corp---discussion-2025-08-11-06-55-59-910Z.pdf",
-    "meetingStartTime": "2025-08-25T06:55:08.980Z",
-    "meetingSummary": "Acme Corp - Discussion"
-  },
-  "34d0da80f11e": {
-    "eventId": "34d0da80f11e",
-    "eventHash": "d372010a587e12abd2c9bb98c6b6d5cec4beb9ccfaefddae2a79c1038fc58d7c",
-    "generatedAt": "2025-08-11T09:23:28.166Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-acme-corp---understand-client-requirements-2025-08-11-09-23-27-384Z.pdf",
-    "meetingStartTime": "2025-08-25T09:22:49.944Z",
-    "meetingSummary": "Acme Corp - understand client requirements"
-  },
   "c47cdffd45a9": {
     "eventId": "c47cdffd45a9",
     "eventHash": "7e8866333a0e04379df7e7834547d46efa31007953df8b92d595a330032bff38",
@@ -45,6 +29,22 @@
     "generatedAt": "2025-08-30T09:58:49.498Z",
     "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-meta-client-meeting-2025-08-30-09-58-40-895Z.pdf",
     "meetingStartTime": "2025-08-30T15:30:00+05:30",
+    "meetingSummary": "meta client meeting"
+  },
+  "a8301101ceee": {
+    "eventId": "a8301101ceee",
+    "eventHash": "8d1af86b7dcaef97bd013a16fe5c410cd5c251092424d3a2a704677b5808b617",
+    "generatedAt": "2025-09-02T14:18:29.101Z",
+    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-meta-client-meeting-2025-09-02-14-18-25-756Z.pdf",
+    "meetingStartTime": "2025-09-02T20:00:00+05:30",
+    "meetingSummary": "meta client meeting"
+  },
+  "45mk13rj52irokvl8ol92e65lt": {
+    "eventId": "45mk13rj52irokvl8ol92e65lt",
+    "eventHash": "8d1af86b7dcaef97bd013a16fe5c410cd5c251092424d3a2a704677b5808b617",
+    "generatedAt": "2025-09-02T14:18:36.005Z",
+    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-meta-client-meeting-2025-09-02-14-18-25-756Z.pdf",
+    "meetingStartTime": "2025-09-02T20:00:00+05:30",
     "meetingSummary": "meta client meeting"
   }
 }

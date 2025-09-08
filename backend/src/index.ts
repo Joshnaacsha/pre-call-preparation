@@ -297,7 +297,7 @@ async function handleOAuthCallback(req: Request, res: Response) {
 }
 
 async function main(initialState?: GraphState): Promise<GraphState> {
-  console.log('\n🚀 Starting Cprime AI Pre-Call Pipeline...');
+  console.log('\n[Start] Starting Cprime AI Pre-Call Pipeline...');
   console.log('=' .repeat(60));
 
   let state: GraphState;
@@ -312,7 +312,7 @@ async function main(initialState?: GraphState): Promise<GraphState> {
   }
   
   // DEBUG: Check what we got from authorize
-  console.log('🔍 Debug - State after authorize:', {
+  console.log('[Debug] State after authorize:', {
     hasCalendarEvents: !!state.calendarEvents,
     eventsLength: state.calendarEvents?.length || 0,
     stateKeys: Object.keys(state),
@@ -321,7 +321,7 @@ async function main(initialState?: GraphState): Promise<GraphState> {
 
   // Check if any client meetings found in next 3 hours
   if (!state.calendarEvents || state.calendarEvents.length === 0) {
-    console.log('✅ No client meetings found in the next 3 hours.');
+    console.log('[Info] No client meetings found in the next 3 hours.');
     console.log('   - All existing meetings may already have PDFs generated');
     console.log('   - Or no meetings match client/external attendee criteria');
     console.log('   - Pipeline completed successfully with no work needed.\n');
@@ -1098,10 +1098,10 @@ app.listen(parseInt(process.env.PORT || '3001'), () => {
   const hasTavily = process.env.TAVILY_API_KEY && !process.env.TAVILY_API_KEY.startsWith("your_tavily_api_key");
   const hasGemini = process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith("your_gemini_api_key");
   
-  console.log(`   Hunter.io: ${hasHunter ? '✅ Configured' : '❌ Not configured'}`);
-  console.log(`   OpenAI: ${hasOpenAI ? '✅ Configured' : '❌ Not configured'}`);
-  console.log(`   Tavily: ${hasTavily ? '✅ Configured' : '❌ Not configured'}`);
-  console.log(`   Gemini: ${hasGemini ? '✅ Configured' : '❌ Not configured'}`);
+  console.log(`   Hunter.io: ${hasHunter ? '[OK] Configured' : '[X] Not configured'}`);
+  console.log(`   OpenAI: ${hasOpenAI ? '[OK] Configured' : '[X] Not configured'}`);
+  console.log(`   Tavily: ${hasTavily ? '[OK] Configured' : '[X] Not configured'}`);
+  console.log(`   Gemini: ${hasGemini ? '[OK] Configured' : '[X] Not configured'}`);
   
   if (!hasHunter) {
     console.log(`\n💡 Add HUNTER_API_KEY=your_api_key_here to .env for enhanced attendee research`);

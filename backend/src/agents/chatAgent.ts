@@ -1,9 +1,13 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import type { GraphState } from '../graph/graphState';
 import { embedAndStoreEvent } from '../embeddings/embedAndStore.js';
 
 dotenv.config();
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 // Define interfaces for chat interaction
 interface ChatInput {
@@ -54,7 +58,7 @@ setInterval(() => {
   for (const [sessionId, context] of conversationContexts.entries()) {
     if (now.getTime() - context.lastUpdated.getTime() > SESSION_TIMEOUT) {
       conversationContexts.delete(sessionId);
-      console.log(`🧹 Cleaned up expired session: ${sessionId}`);
+      console.log(`[Cleanup] Cleaned up expired session: ${sessionId}`);
     }
   }
 }, 5 * 60 * 1000); // Check every 5 minutes
@@ -122,9 +126,6 @@ async function processChatInput(input: ChatInput, sessionId: string = 'default')
   const context = getOrCreateContext(sessionId);
   const message = input.message.toLowerCase();
   const isUncertain = isUncertainResponse(input.message);
-
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   // Get existing info from context
     const existingInfo = {
@@ -194,8 +195,13 @@ async function processChatInput(input: ChatInput, sessionId: string = 'default')
   `;
 
   try {
-    const result = await model.generateContent(prompt);
-    let rawText = result.response.text().trim();
+    const aiResponse = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
+    });
+    
+    let rawText = aiResponse.choices[0].message.content?.trim() || "";
     
     // Clean up response
     if (rawText.startsWith("```")) {
@@ -269,7 +275,7 @@ async function processChatInput(input: ChatInput, sessionId: string = 'default')
       followUpQuestion: missingFields.length > 0 ? generateSmartFollowUpQuestion(missingFields) : undefined
     };
 
-    console.log('✅ Processed chat input:', {
+    console.log('[Info] Processed chat input:', {
       preserved: existingInfo,
       extracted: response.extractedInfo,
       missing: missingFields,
@@ -432,7 +438,7 @@ export async function handleChatRequest(
   // Helper to check if a field should be considered "complete"
   const isFieldComplete = (field: string): boolean => {
     if (info.skippedFields.includes(field)) {
-      console.log(`📝 Field "${field}" marked as skipped`);
+      console.log(`[Info] Field "${field}" marked as skipped`);
       return true;
     }
     
@@ -458,7 +464,7 @@ export async function handleChatRequest(
 
   // If we still need more info, ask the next question
   if (nextMissingField) {
-    console.log(`🔍 Missing field: ${nextMissingField}`);
+    console.log(`[Info] Missing field: ${nextMissingField}`);
     // Keep session active
     updateContext(sessionId, { state: SessionState.COLLECTING_INFO });
     return {
@@ -491,7 +497,7 @@ export async function handleChatRequest(
     };
 
     await embedAndStoreEvent(event);
-    console.log('📊 Successfully stored meeting data');
+    console.log('[Success] Successfully stored meeting data');
 
     // Generate summary using the main pipeline
     const { generateMeetingSummary } = await import('./summaryGenarationAgent.js');
@@ -509,7 +515,7 @@ export async function handleChatRequest(
     }
 
     // If we get here, something went wrong with summary generation
-    console.error('❌ Failed to generate summary');
+    console.error('[Error] Failed to generate summary');
     return {
       graphState: null,
       needsMoreInfo: true,
@@ -517,7 +523,7 @@ export async function handleChatRequest(
     };
     
   } catch (error) {
-    console.error('❌ Failed to process meeting:', error);
+    console.error('[Error] Failed to process meeting:', error);
     return {
       graphState: null,
       needsMoreInfo: true,

@@ -1,12 +1,13 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import { searchDocuments } from '../embeddings/embedAndStore.js';
 import { performTavilySearch, processSearchResults, TavilySearchResult } from './tavilySearchAgent.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 export interface RAGResponse {
   answer: string;
@@ -100,11 +101,13 @@ ANSWER: I don't see this specific information in our meeting records. Would you 
 SUGGESTED_QUESTIONS: (3 alternative questions about topics that ARE covered in the context)
 `;
 
-  const result = await model.generateContent({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4-turbo-preview",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.7,
   });
 
-  const response = await result.response.text();
+  const response = completion.choices[0].message.content || '';
   
   // Parse response
   const answerMatch = response.match(/ANSWER:(.*?)(?=SUGGESTED_QUESTIONS:|$)/s);
