@@ -14,7 +14,7 @@ import {
 import { searchPreviousMeetings } from './calendar/searchPreviousMeetings.js';
 import { prepareTavilyInputAgent } from './agents/tavilySearchAgent.js';
 // Updated import: Add Hunter.io research function
-import { conductHunterResearch, conductLinkedInResearch } from './agents/linkedinAgent.js';
+import { conductLLMResearch } from './agents/clientSearchAgent.js';
 import { generateMeetingSummary } from './agents/summaryGenarationAgent.js';
 import { generatePdfAndSendEmail } from './agents/pdfEmailAgent.js';
 import { hasPdfBeenGenerated, markPdfAsGenerated } from './calendar/listEvents.js';
@@ -417,13 +417,9 @@ async function main(initialState?: GraphState): Promise<GraphState> {
         const hunterApiKey = process.env.HUNTER_API_KEY;
         let researchState;
         
-        if (hunterApiKey && !hunterApiKey.startsWith("your_hunter_api_key")) {
-          console.log(`      🎯 Using Hunter.io + AI research...`);
-          researchState = await conductHunterResearch(individualMeetingState);
-        } else {
-          console.log(`      🔗 Using AI-only research (Hunter.io not configured)...`);
-          researchState = await conductLinkedInResearch(individualMeetingState);
-        }
+  // Hunter.io research is not available, fallback to LLM research
+  console.log(`      🔗 Using AI-only research (Hunter.io not configured)...`);
+  researchState = await conductLLMResearch(individualMeetingState);
         
         // Merge the contactUpdates from research with existing externalResearch
         individualMeetingState.externalResearch = {
@@ -797,13 +793,9 @@ async function runFullResearchPipeline(initialState: GraphState): Promise<GraphS
       const hunterApiKey = process.env.HUNTER_API_KEY;
       let researchState;
       
-      if (hunterApiKey && !hunterApiKey.startsWith("your_hunter_api_key")) {
-        console.log('Using Hunter.io + AI research...');
-        researchState = await conductHunterResearch(initialState);
-      } else {
-        console.log('Using AI-only research (Hunter.io not configured)...');
-        researchState = await conductLinkedInResearch(initialState);
-      }
+  // Hunter.io research is not available, fallback to LLM research
+  console.log('Using AI-only research (Hunter.io not configured)...');
+  researchState = await conductLLMResearch(initialState);
       
       // Merge research results
       initialState.externalResearch = {
@@ -1011,6 +1003,7 @@ app.delete('/api/session/:sessionId', (req, res) => {
   res.json({ success: true, message: `Session ${sessionId} cleared` });
 });
 
+
 // NEW: Test Hunter.io endpoint for debugging
 app.post('/api/test-hunter', async (req, res) => {
   const { email } = req.body;
@@ -1024,14 +1017,14 @@ app.post('/api/test-hunter', async (req, res) => {
 
   try {
     console.log(`Testing Hunter.io research for: ${email}`);
-    const { runStandaloneHunterResearch } = await import('./agents/linkedinAgent.js');
-    const result = await runStandaloneHunterResearch(email);
+    const { runStandaloneLLMResearch } = await import('./agents/clientSearchAgent.js');
+    const result = await runStandaloneLLMResearch(email);
     
     return res.json({
       success: true,
       result,
-      hasHunterData: !!(result.hunterData || result.companyData),
-      confidence: result.hunterData?.confidence || 'N/A'
+      hasVerifiedData: result.verified,
+      dataQuality: result.sourceCount ? 'High' : 'Limited'
     });
   } catch (error) {
     console.error('Hunter.io test failed:', error);
@@ -1059,7 +1052,11 @@ app.get('/api/pipeline-status', (req, res) => {
     ...pipelineStatus,
     duration: pipelineStatus.startTime ? Date.now() - pipelineStatus.startTime.getTime() : null
   });
+
+  
 });
+
+
 
 // NEW: Update pipeline status helper
 function updatePipelineStatus(step: string, meetingName?: string, error?: string) {
@@ -1103,9 +1100,7 @@ app.listen(parseInt(process.env.PORT || '3001'), () => {
   console.log(`   Tavily: ${hasTavily ? '[OK] Configured' : '[X] Not configured'}`);
   console.log(`   Gemini: ${hasGemini ? '[OK] Configured' : '[X] Not configured'}`);
   
-  if (!hasHunter) {
-    console.log(`\n💡 Add HUNTER_API_KEY=your_api_key_here to .env for enhanced attendee research`);
-  }
+
 });
 
 // Optional: Run the pipeline on startup

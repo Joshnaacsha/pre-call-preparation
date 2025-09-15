@@ -25,6 +25,7 @@ An AI-powered system that automatically prepares briefings for upcoming client m
   - Google Calendar API
   - OpenAI API
   - Tavily API
+  - Perplexity API
 
 ## Prerequisites
 

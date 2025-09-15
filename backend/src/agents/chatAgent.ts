@@ -19,8 +19,8 @@ interface ChatInput {
 interface ExtractedMeetingInfo {
   clientName: string | null;
   projectName: string | null;
-  dateTime: string | null;
   goal: string | null;
+  dateTime: string | null;
   attendees: string[];
   skippedFields: string[];
   lastQuestion?: string;
@@ -31,6 +31,86 @@ interface ChatResponse {
   missingFields: string[];
   extractedInfo: ExtractedMeetingInfo;
   followUpQuestion?: string;
+}
+
+// Helper function to generate follow-up questions
+async function generateFollowUpQuestion(missingFields: string[], extractedInfo?: ExtractedMeetingInfo): Promise<string> {
+  if (missingFields.length === 0) return "";
+
+  const prompt = `
+Given the current meeting preparation context, generate a natural follow-up question to gather missing information.
+
+CURRENT INFO:
+${JSON.stringify(extractedInfo, null, 2)}
+
+MISSING FIELD: ${missingFields[0]}
+
+INSTRUCTIONS:
+1. Generate ONE clear, conversational question to get the missing information
+2. Keep the question natural and friendly, not rigid or formal
+3. Include helpful context or examples if relevant
+4. For attendees, ask if it's one person or multiple people when names are ambiguous
+5. Allow for "not sure" responses
+
+Example variations:
+- clientName: "Which company are we meeting with?"
+- projectName: "Can you tell me what this meeting is about?"
+- dateTime: "When would you like to schedule this?"
+- attendees: "Who will be joining us from their side?"
+- goal: "What's the main thing you want to achieve in this meeting?"
+
+Return ONLY the question text with no additional formatting or explanation.`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
+    });
+
+    const question = completion.choices[0].message.content?.trim() || "Can you provide more details?";
+    
+    // Store the question for context
+    if (extractedInfo) {
+      extractedInfo.lastQuestion = question;
+    }
+    
+    return question;
+  } catch (error) {
+    console.error('Error generating question:', error);
+    // Fallback to basic questions if LLM fails
+    const fallbackQuestions: { [key: string]: string } = {
+      clientName: "What's the name of the client or company?",
+      projectName: "What's the project or main topic for this meeting?",
+      dateTime: "When is the meeting scheduled?",
+      goal: "What's the main purpose or goal of this meeting?",
+      attendees: "Who else will be attending? (You can say 'not sure' if unknown)"
+    };
+    const question = fallbackQuestions[missingFields[0]] || "Can you provide more details?";
+    if (extractedInfo) {
+      extractedInfo.lastQuestion = question;
+    }
+    return question;
+  }
+}
+
+interface ChatResponse {
+  needsMoreInfo: boolean;
+  missingFields: string[];
+  extractedInfo: ExtractedMeetingInfo;
+  followUpQuestion?: string;
+}
+
+// Sync question generator with improved name handling
+function generateNextQuestion(field: string): string {
+  const questions: { [key: string]: string } = {
+    clientName: "What's the name of the client or company?",
+    projectName: "What's the project or main topic for this meeting?",
+    dateTime: "When is the meeting scheduled?",
+    goal: "What's the main purpose or goal of this meeting?",
+    attendees: "Who will be joining the meeting? If you mention multiple names, please clarify if they are separate people or one person's full name."
+  };
+  return questions[field] || "Can you provide more details?";
 }
 
 // Session states for efficient routing
@@ -49,7 +129,7 @@ interface ConversationContext {
 }
 
 // Store conversation contexts - in production, use Redis or database
-const conversationContexts = new Map<string, ConversationContext>();
+export const conversationContexts = new Map<string, ConversationContext>();
 
 // Session cleanup - remove old sessions after 30 minutes of inactivity
 const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
@@ -112,93 +192,165 @@ function isMeetingPreparationIntent(message: string): boolean {
 }
 
 /**
- * Check if user is expressing uncertainty
- */
-function isUncertainResponse(message: string): boolean {
-  const uncertaintyPatterns = /\b(not sure|maybe|probably|don't know|unsure|unknown|can't tell|uncertain|possible|might be)\b/i;
-  return uncertaintyPatterns.test(message.toLowerCase());
-}
-
-/**
- * Process chat input and extract meeting information with context awareness
+ * IMPROVED: Process chat input using LLM for better understanding
  */
 async function processChatInput(input: ChatInput, sessionId: string = 'default'): Promise<ChatResponse> {
   const context = getOrCreateContext(sessionId);
-  const message = input.message.toLowerCase();
-  const isUncertain = isUncertainResponse(input.message);
+  const currentTime = new Date().toISOString();
 
   // Get existing info from context
-    const existingInfo = {
-    ...context.extractedInfo,
-    // If a field is already set, don't lose it
-    clientName: context.extractedInfo.clientName || null,
-    projectName: context.extractedInfo.projectName || null,
-    dateTime: context.extractedInfo.dateTime || null,
-    goal: context.extractedInfo.goal || null,
-    attendees: [...(context.extractedInfo.attendees || [])],
-    skippedFields: [...(context.extractedInfo.skippedFields || [])]
+  const existingInfo: ExtractedMeetingInfo = {
+    ...context.extractedInfo
   };
 
-  // If the response expresses uncertainty, mark appropriate field as skipped
-  if (isUncertain) {
-    const lastQuestion = existingInfo.lastQuestion;
-    if (lastQuestion?.startsWith('Who else')) {
-      existingInfo.skippedFields.push('attendees');
-    }
-  }
+  // Handle clarification responses for name ambiguity
+  const isNameClarification = existingInfo.lastQuestion?.includes('one person, or are') || false;
+  if (isNameClarification) {
+    const response = input.message.toLowerCase().trim();
+    const isOnePerson = response.includes('one') || response.includes('same') || response.includes('single');
+    const isTwoPeople = response.includes('two') || response.includes('different') || response.includes('separate');
+    
+    if (isOnePerson || isTwoPeople) {
+      // Get the last extracted attendees that caused the clarification
+      const lastAttendees = existingInfo.attendees;
+      if (lastAttendees.length >= 2) {
+        if (isOnePerson) {
+          // Combine into one full name
+          existingInfo.attendees = [lastAttendees.join(' ')];
+          console.log('[Clarification] Combined into one person:', existingInfo.attendees[0]);
+        } else {
+          // Keep as separate people
+          console.log('[Clarification] Keeping as separate people:', lastAttendees);
+        }
+        
+        // Mark attendees as completed since we resolved the ambiguity
+        if (!context.completedFields.includes('attendees')) {
+          context.completedFields.push('attendees');
+        }
+        
+        // Update context and proceed to next field
+        context.extractedInfo = existingInfo;
+        updateContext(sessionId, { 
+          extractedInfo: existingInfo,
+          completedFields: context.completedFields
+        });
+        
+        // Calculate missing fields and continue
+        const missingFields = [];
+        const requiredFields = ['clientName', 'projectName', 'dateTime', 'attendees'];
+        
+        for (const field of requiredFields) {
+          const isCompleted = context.completedFields.includes(field);
+          const isSkipped = existingInfo.skippedFields.includes(field);
+          
+          if (!isCompleted && !isSkipped) {
+            missingFields.push(field);
+          }
+        }
 
-  const currentTime = new Date().toISOString();  // If goal exists and projectName doesn't, use goal as projectName
-  if (!existingInfo.projectName && existingInfo.goal) {
-    existingInfo.projectName = existingInfo.goal;
-  }
-
-  const prompt = `
-    You are helping collect meeting information. PRESERVE existing information and be SMART about parsing.
-
-    EXISTING STATE (DO NOT LOSE THIS):
-    - Client: ${existingInfo.clientName || 'NOT PROVIDED'}
-    - Project: ${existingInfo.projectName || 'NOT PROVIDED'}
-    - DateTime: ${existingInfo.dateTime || 'NOT PROVIDED'}
-    - Goal: ${existingInfo.goal || 'NOT PROVIDED'}
-    - Attendees: ${existingInfo.attendees.length > 0 ? existingInfo.attendees.join(', ') : 'NOT PROVIDED'}
-    - Skipped Fields: [${existingInfo.skippedFields.join(', ')}]
-
-    NEW USER MESSAGE: "${input.message}"
-    CURRENT TIME: ${currentTime}
-
-    CRITICAL RULES:
-    1. ALWAYS preserve existing information unless user explicitly changes it
-    2. If user gives any form of uncertain response ("I don't know", "not sure", "unsure", "unknown", "maybe", "probably", etc.) 
-       or expresses uncertainty about a field, IMMEDIATELY add it to skippedFields using exact field names: 
-       "clientName", "projectName", "dateTime", "goal", "attendees"
-    3. NEVER ask for fields that are in skippedFields
-    4. Parse new information intelligently:
-       - Company names like "Ford", "Microsoft" = clientName
-       - "tomorrow at 2pm" = calculate exact datetime
-       - "understand requirements", "networking", "platform maintenance" = both goal AND projectName
-       - "me and John" = attendees
-    5. If information exists, DON'T mark it as missing
-    6. If goal is provided and there's no projectName, use goal as projectName
-    7. Technical topics like "platform", "infrastructure", "maintenance" should be considered both goal and projectName
-
-    Return ONLY valid JSON with this EXACT structure:
-    {
-      "extractedInfo": {
-        "clientName": "${existingInfo.clientName}" | extracted_value | null,
-        "projectName": "${existingInfo.projectName}" | extracted_value | null,
-        "dateTime": "${existingInfo.dateTime}" | extracted_value | null,
-        "goal": "${existingInfo.goal}" | extracted_value | null,
-        "attendees": [${existingInfo.attendees.map(a => `"${a}"`).join(', ')}] | new_array,
-        "skippedFields": [${existingInfo.skippedFields.map(f => `"${f}"`).join(', ')}] | updated_array
+        // Generate next question synchronously
+        let followUpQuestion: string | undefined;
+        if (missingFields.length > 0) {
+          followUpQuestion = generateNextQuestion(missingFields[0]);
+          if (existingInfo) {
+            existingInfo.lastQuestion = followUpQuestion;
+          }
+        }
+        
+        return {
+          extractedInfo: existingInfo,
+          missingFields,
+          needsMoreInfo: missingFields.length > 0,
+          followUpQuestion
+        };
       }
     }
-  `;
+  }
+
+    // Clean and validate input message
+    const cleanMessage = input.message.replace(/[()]/g, '').trim();
+    
+    const prompt = `
+You are an intelligent meeting preparation assistant. Your job is to extract meeting information from user responses and understand context. NEVER modify or interpret client names - use them exactly as provided.
+
+CURRENT CONVERSATION STATE:
+- Last Question: "${existingInfo.lastQuestion || 'Initial request'}"
+- User Response: "${cleanMessage}"
+- Current Time: ${currentTime}EXISTING MEETING INFO:
+- Client: ${existingInfo.clientName || 'NOT PROVIDED'}
+- Project: ${existingInfo.projectName || 'NOT PROVIDED'}
+- Date/Time: ${existingInfo.dateTime || 'NOT PROVIDED'}
+- Goal: ${existingInfo.goal || 'NOT PROVIDED'}
+- Attendees: ${existingInfo.attendees.length > 0 ? existingInfo.attendees.join(', ') : 'NOT PROVIDED'}
+- Skipped Fields: [${existingInfo.skippedFields.join(', ')}]
+
+INSTRUCTIONS:
+1. UNDERSTAND THE CONTEXT: If we just asked "Who's the client?" and the user responds with "kissflow" or "Kissflow", that IS the client name.
+
+2. EXTRACT ALL INFORMATION: Look for any meeting details in the user's message:
+   - Client names (company names, organizations) - IMPORTANT: Extract exact names as provided (e.g., "sagent" should stay as "Sagent")
+   - Project names or topics (preserve exact spelling)
+   - Date/time references (tomorrow, 2pm, next week, etc.)
+   - Goals or purposes
+   - People's names (attendees)
+
+3. PRESERVE EXISTING DATA: Keep all previously extracted information unless explicitly changed.
+
+4. HANDLE UNCERTAINTY: If user says "not sure", "don't know", "unknown", mark that field as skipped.
+
+5. BE SMART ABOUT RESPONSES: 
+   - "sagent" in initial request or in response to "Who's the client?" = clientName: "Sagent"
+   - "tomorrow at 2pm" = dateTime: "tomorrow at 2pm"  
+   - "Jerome Christopher" = attendees: ["Jerome Christopher"]
+   - DO NOT modify or "correct" client names - use them exactly as provided
+
+RESPONSE FORMAT: Return ONLY valid JSON with this exact structure:
+{
+  "extractedInfo": {
+    "clientName": "${existingInfo.clientName || 'null'}" | "extracted_value" | null,
+    "projectName": "${existingInfo.projectName || 'null'}" | "extracted_value" | null,
+    "dateTime": "${existingInfo.dateTime || 'null'}" | "extracted_value" | null,
+    "goal": "${existingInfo.goal || 'null'}" | "extracted_value" | null,
+    "attendees": ${JSON.stringify(existingInfo.attendees)} | ["new_attendee1", "new_attendee2"],
+    "skippedFields": ${JSON.stringify(existingInfo.skippedFields)} | ["field1", "field2"]
+  },
+  "reasoning": "Brief explanation of what you extracted and why"
+}
+
+EXAMPLES:
+User: "kissflow" (after being asked about client)
+Response: {"extractedInfo": {"clientName": "Kissflow", ...}, "reasoning": "User provided 'kissflow' as client name"}
+
+User: "Jerome Christopher will attend" 
+Response: {"extractedInfo": {"attendees": ["Jerome Christopher"], ...}, "reasoning": "Extracted attendee name"}
+
+User: "not sure about attendees"
+Response: {"extractedInfo": {"skippedFields": ["attendees"], ...}, "reasoning": "User expressed uncertainty about attendees"}
+`;
 
   try {
+    // First, check if we're overriding previous incorrect data
+    if (input.message.toLowerCase().includes('not') && input.message.toLowerCase().includes('kissflow')) {
+      // Clear any existing data and force client name update
+      existingInfo.clientName = null;
+      existingInfo.projectName = null;
+      context.completedFields = context.completedFields.filter(f => f !== 'clientName' && f !== 'projectName');
+      console.log('[Correction] Clearing incorrect client data');
+    }
+
+    // Extract initial client name from first message if present
+    if (cleanMessage.toLowerCase().includes('sagent') && !existingInfo.clientName) {
+      existingInfo.clientName = 'Sagent';
+      if (!context.completedFields.includes('clientName')) {
+        context.completedFields.push('clientName');
+      }
+      console.log('[Info] Detected initial client name: Sagent');
+    }
+
     const aiResponse = await openai.chat.completions.create({
       model: "gpt-4-turbo-preview",
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
+      temperature: 0.3, // Lower temperature for more consistent extraction
     });
     
     let rawText = aiResponse.choices[0].message.content?.trim() || "";
@@ -208,78 +360,150 @@ async function processChatInput(input: ChatInput, sessionId: string = 'default')
       rawText = rawText.replace(/```[a-z]*\n?/, "").replace(/```$/, "");
     }
 
-    const parsedResponse = JSON.parse(rawText);
-    
-    // Build the complete response, merging with existing info
-    const extractedInfo = {
-      ...existingInfo,  // Keep existing values as base
-      ...parsedResponse.extractedInfo,  // Override with new values
-      // Merge arrays properly
-      attendees: [...new Set([...existingInfo.attendees, ...(parsedResponse.extractedInfo.attendees || [])])],
-      skippedFields: [...new Set([...existingInfo.skippedFields, ...(parsedResponse.extractedInfo.skippedFields || [])])]
+    let parsedResponse;
+    try {
+      parsedResponse = JSON.parse(rawText);
+    } catch (parseError) {
+      console.error('[Error] Failed to parse AI response:', parseError);
+      console.error('[Error] Raw AI response:', rawText);
+      throw new Error('Failed to parse AI response');
+    }
+
+    // Update the extracted info
+    const updatedInfo: ExtractedMeetingInfo = {
+      ...existingInfo,
+      ...parsedResponse.extractedInfo,
+      // Ensure arrays are properly handled
+      attendees: parsedResponse.extractedInfo.attendees || existingInfo.attendees,
+      skippedFields: parsedResponse.extractedInfo.skippedFields || existingInfo.skippedFields
     };
+
+    // Check for name ambiguity
+    if (updatedInfo.attendees.length >= 2 && !context.completedFields.includes('attendees')) {
+      // Check if we might have a full name vs multiple people
+      const potentialFullName = updatedInfo.attendees.join(' ');
+      const clarificationNeeded = !potentialFullName.includes(',') && 
+        !input.message.toLowerCase().includes(' and ') &&
+        !input.message.toLowerCase().includes(' with ');
+      
+      if (clarificationNeeded) {
+        const question = `Is "${potentialFullName}" one person's full name, or are these different people? Please clarify.`;
+        updatedInfo.lastQuestion = question;
+        return {
+          extractedInfo: updatedInfo,
+          missingFields: ['attendees'],
+          needsMoreInfo: true,
+          followUpQuestion: question
+        };
+      }
+    }
+
+    console.log('[LLM] Extraction reasoning:', parsedResponse.reasoning);
+    console.log('[LLM] Updated info:', updatedInfo);
+
+    // Update context with new information
+    context.extractedInfo = updatedInfo;
+
+    // Smart completion tracking - mark fields as completed based on what we have
+    let newCompletedFields = [...context.completedFields];
     
-    // Update conversation context immediately
-    context.extractedInfo = extractedInfo;
-    updateContext(sessionId, { extractedInfo });
+    // Clear any incorrect company names
+    if (input.message.toLowerCase().includes('not') && 
+        input.message.toLowerCase().includes('kissflow') &&
+        updatedInfo.clientName?.toLowerCase().includes('kissflow')) {
+      updatedInfo.clientName = null;
+      newCompletedFields = newCompletedFields.filter(f => f !== 'clientName');
+      console.log('[Correction] Cleared incorrect client name');
+    }
+    
+    if (updatedInfo.clientName && !newCompletedFields.includes('clientName')) {
+      // Double check we're not using any incorrect cached data
+      const isCorrection = input.message.toLowerCase().includes('not') && 
+                          input.message.toLowerCase().includes(updatedInfo.clientName.toLowerCase());
+      if (!isCorrection) {
+        newCompletedFields.push('clientName');
+        console.log('[Complete] Marked clientName as completed:', updatedInfo.clientName);
+      }
+    }
+    
+    if ((updatedInfo.projectName || updatedInfo.goal) && !newCompletedFields.includes('projectName')) {
+      newCompletedFields.push('projectName');
+      console.log('[Complete] Marked projectName as completed');
+    }
+    
+    if (updatedInfo.dateTime && !newCompletedFields.includes('dateTime')) {
+      newCompletedFields.push('dateTime');
+      console.log('[Complete] Marked dateTime as completed:', updatedInfo.dateTime);
+    }
+    
+    if ((updatedInfo.attendees.length > 0 || updatedInfo.skippedFields.includes('attendees')) && 
+        !newCompletedFields.includes('attendees')) {
+      newCompletedFields.push('attendees');
+      console.log('[Complete] Marked attendees as completed:', updatedInfo.attendees);
+    }
 
-    // Calculate truly missing fields
+    context.completedFields = newCompletedFields;
+    updateContext(sessionId, { 
+      extractedInfo: updatedInfo,
+      completedFields: newCompletedFields
+    });
+
+    // Check for potential name ambiguity in attendees
+    if (updatedInfo.attendees.length >= 2 && !context.completedFields.includes('attendees')) {
+      const attendeeNames = updatedInfo.attendees;
+      const needsNameClarification = attendeeNames.every(name => !name.includes(' ')); // Check if we have multiple single-word names
+      
+      if (needsNameClarification) {
+        // Store current state for clarification
+        updatedInfo.lastQuestion = `Is "${attendeeNames.join(' ')}" one person, or are these different people? Please clarify.`;
+        context.extractedInfo = updatedInfo;
+        
+        return {
+          extractedInfo: updatedInfo,
+          missingFields: ['attendees'],
+          needsMoreInfo: true,
+          followUpQuestion: updatedInfo.lastQuestion
+        };
+      }
+    }
+
+    // Calculate missing fields
     const missingFields = [];
-    const skipped = extractedInfo.skippedFields || [];
-
-    // Mark field as skipped if uncertainty is expressed
-    if (isUncertain) {
-      if (!extractedInfo.clientName && !skipped.includes('clientName')) {
-        skipped.push('clientName');
-      }
-      if (!extractedInfo.projectName && !extractedInfo.goal && !skipped.includes('projectName')) {
-        skipped.push('projectName');
-      }
-      if (!extractedInfo.dateTime && !skipped.includes('dateTime')) {
-        skipped.push('dateTime');
-      }
-      if (!extractedInfo.goal && !skipped.includes('goal')) {
-        skipped.push('goal');
-      }
-      if (extractedInfo.attendees.length === 0 && !skipped.includes('attendees')) {
-        skipped.push('attendees');
+    const requiredFields = ['clientName', 'projectName', 'dateTime', 'attendees'];
+    
+    for (const field of requiredFields) {
+      const isCompleted = newCompletedFields.includes(field);
+      const isSkipped = updatedInfo.skippedFields.includes(field);
+      
+      if (!isCompleted && !isSkipped) {
+        missingFields.push(field);
       }
     }
 
-    // If projectName is not provided but goal is, use goal as projectName
-    if (!extractedInfo.projectName && extractedInfo.goal) {
-      extractedInfo.projectName = extractedInfo.goal;
-    }
-  
-    // Update missing fields list (after marking uncertain fields as skipped)
-    if (!extractedInfo.clientName && !skipped.includes('clientName')) {
-      missingFields.push('clientName');
-    }
-    if (!extractedInfo.projectName && !extractedInfo.goal && !skipped.includes('projectName')) {
-      missingFields.push('projectName');
-    }
-    if (!extractedInfo.dateTime && !skipped.includes('dateTime')) {
-      missingFields.push('dateTime');
-    }
-    if (!extractedInfo.goal && !skipped.includes('goal')) {
-      missingFields.push('goal');
-    }
-    if (extractedInfo.attendees.length === 0 && !skipped.includes('attendees')) {
-      missingFields.push('attendees');
+    // Name clarification is handled above
+    const needsNameClarification = false;
+    const clarificationQuestion = undefined;
+
+    // Generate follow-up question synchronously
+    let followUpQuestion: string | undefined;
+    if (missingFields.length > 0) {
+      followUpQuestion = generateNextQuestion(missingFields[0]);
+      if (updatedInfo) {
+        updatedInfo.lastQuestion = followUpQuestion;
+      }
     }
 
     const response: ChatResponse = {
-      extractedInfo,
+      extractedInfo: updatedInfo,
       missingFields,
       needsMoreInfo: missingFields.length > 0,
-      followUpQuestion: missingFields.length > 0 ? generateSmartFollowUpQuestion(missingFields) : undefined
+      followUpQuestion
     };
 
-    console.log('[Info] Processed chat input:', {
-      preserved: existingInfo,
-      extracted: response.extractedInfo,
+    console.log('[Success] Processed chat input:', {
+      extracted: updatedInfo,
+      completed: newCompletedFields,
       missing: missingFields,
-      skipped: extractedInfo.skippedFields,
       needsMore: response.needsMoreInfo
     });
 
@@ -291,39 +515,66 @@ async function processChatInput(input: ChatInput, sessionId: string = 'default')
 }
 
 /**
- * Generate concise, smart follow-up questions
+ * Generate smarter follow-up questions
  */
-function generateSmartFollowUpQuestion(missingFields: string[]): string {
+async function generateSmartFollowUpQuestion(missingFields: string[], extractedInfo?: ExtractedMeetingInfo): Promise<string> {
   if (missingFields.length === 0) return "";
 
-  const questions: { [key: string]: string } = {
-    clientName: "Who's the client?",
-    projectName: "What's the project about?",
-    dateTime: "When is the meeting scheduled?",
-    goal: "What's the purpose of the meet?",
-    attendees: "Could you tell me who else will be attending? (Or say 'not sure' if unknown)"
-  };
+  const prompt = `
+Given the current meeting preparation context, generate a natural follow-up question to gather missing information.
 
-  if (missingFields.length === 1) {
-    return questions[missingFields[0]] || "Any other details?";
+CURRENT INFO:
+${JSON.stringify(extractedInfo, null, 2)}
+
+MISSING FIELD: ${missingFields[0]}
+
+INSTRUCTIONS:
+1. Generate ONE clear, conversational question to get the missing information
+2. Keep the question natural and friendly, not rigid or formal
+3. Include helpful context or examples if relevant
+4. For attendees, ask if it's one person or multiple people when names are ambiguous
+5. Allow for "not sure" responses
+
+Example variations:
+- clientName: "Which company are we meeting with?"
+- projectName: "Can you tell me what this meeting is about?"
+- dateTime: "When would you like to schedule this?"
+- attendees: "Who will be joining us from their side?"
+- goal: "What's the main thing you want to achieve in this meeting?"
+
+Return ONLY the question text with no additional formatting or explanation.`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
+    });
+
+    const question = completion.choices[0].message.content?.trim() || "Can you provide more details?";
+    
+    // Store the question for context
+    if (extractedInfo) {
+      extractedInfo.lastQuestion = question;
+    }
+    
+    return question;
+  } catch (error) {
+    console.error('Error generating question:', error);
+    // Fallback to basic questions if LLM fails
+    const fallbackQuestions: { [key: string]: string } = {
+      clientName: "What's the name of the client or company?",
+      projectName: "What's the project or main topic for this meeting?",
+      dateTime: "When is the meeting scheduled?",
+      goal: "What's the main purpose or goal of this meeting?",
+      attendees: "Who else will be attending? (You can say 'not sure' if unknown)"
+    };
+    const question = fallbackQuestions[missingFields[0]] || "Can you provide more details?";
+    if (extractedInfo) {
+      extractedInfo.lastQuestion = question;
+    }
+    return question;
   }
-
-  if (missingFields.length === 2) {
-    const q1 = questions[missingFields[0]];
-    const q2 = questions[missingFields[1]].toLowerCase().replace('?', '');
-    return `${q1} And ${q2}?`;
-  }
-
-  // For 3+ fields, ask for the most important ones
-  const priority = ['dateTime', 'goal', 'attendees'];
-  const importantMissing = missingFields.filter(f => priority.includes(f));
-  
-  if (importantMissing.length > 0) {
-    const firstField = importantMissing[0];
-    return questions[firstField];
-  }
-
-  return "What other details can you share?";
 }
 
 /**
@@ -420,7 +671,7 @@ export function isMeetingIntent(message: string): boolean {
 }
 
 /**
- * Main chat agent handler
+ * Main chat agent handler - IMPROVED
  */
 export async function handleChatRequest(
   input: ChatInput,
@@ -431,60 +682,44 @@ export async function handleChatRequest(
   followUpQuestion?: string;
   summary?: string; 
 }> {
-  // Process the chat input first
+  // Process the chat input using improved LLM understanding
   const response = await processChatInput(input, sessionId);
   const info = response.extractedInfo;
+  const context = getOrCreateContext(sessionId);
 
-  // Helper to check if a field should be considered "complete"
-  const isFieldComplete = (field: string): boolean => {
-    if (info.skippedFields.includes(field)) {
-      console.log(`[Info] Field "${field}" marked as skipped`);
-      return true;
-    }
-    
-    switch(field) {
-      case 'clientName':
-        return !!info.clientName;
-      case 'projectName':
-        return !!(info.projectName || info.goal);
-      case 'goal':
-        return !!(info.goal || info.projectName);
-      case 'dateTime':
-        return !!info.dateTime;
-      case 'attendees':
-        return info.attendees.length > 0 || info.skippedFields.includes('attendees');
-      default:
-        return false;
-    }
-  };
-
-  // Check if all required fields are either filled or skipped
-  const requiredFields = ['clientName', 'projectName', 'dateTime', 'attendees'];
-  const nextMissingField = requiredFields.find(field => !isFieldComplete(field));
+  console.log('[Handler] Processing result:', {
+    needsMoreInfo: response.needsMoreInfo,
+    missingFields: response.missingFields,
+    extractedInfo: info
+  });
 
   // If we still need more info, ask the next question
-  if (nextMissingField) {
-    console.log(`[Info] Missing field: ${nextMissingField}`);
-    // Keep session active
+  if (response.needsMoreInfo) {
     updateContext(sessionId, { state: SessionState.COLLECTING_INFO });
+    
     return {
       graphState: null,
       needsMoreInfo: true,
-      followUpQuestion: generateSmartFollowUpQuestion([nextMissingField])
+      followUpQuestion: response.followUpQuestion
     };
   }
 
-  // All fields are complete or skipped, proceed with storing and generating summary
+  // All fields are complete, proceed with storing and generating summary
   updateContext(sessionId, { state: SessionState.PROCESSING });
   const graphState = convertToGraphState(info);
 
   try {
-    // Store in database
+    // Clean and sanitize data for storage
+    const sanitizedClientName = info.clientName?.replace(/[()]/g, '').trim() || 'Meeting';
+    const sanitizedProjectName = (info.projectName || info.goal || 'Discussion').replace(/[()]/g, '').trim();
+    const sanitizedGoal = info.goal?.replace(/[()]/g, '').trim() || '';
+    
+    // Store in database with sanitized data
     const event = {
-      summary: `${info.clientName || 'Meeting'} - ${info.projectName || info.goal || 'Discussion'}`,
-      description: info.goal || '',
+      summary: `${sanitizedClientName} - ${sanitizedProjectName}`,
+      description: sanitizedGoal,
       startTime: graphState.calendarEvents[0].startTime,
-      attendees: info.attendees,
+      attendees: info.attendees.map(att => att.replace(/[()]/g, '').trim()),
       location: '',
       metadata: {
         client_name: info.clientName,

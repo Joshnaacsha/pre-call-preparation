@@ -19,11 +19,15 @@ export interface RAGResponse {
 }
 
 export async function generateResponse(query: string, clientFilter?: string): Promise<RAGResponse> {
-  // Search for relevant documents
-  const documents = await searchDocuments(query, undefined, clientFilter);
+  // Clean and sanitize the search query
+  const sanitizedQuery = query.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
+  console.log('🔍 Sanitized query:', sanitizedQuery);
+
+  // Search for relevant documents with sanitized query
+  const documents = await searchDocuments(sanitizedQuery, undefined, clientFilter);
   if (!documents || documents.length === 0) {
     console.log('📚 No documents found in database, attempting web search...');
-    return await fallbackToWebSearch(query);
+    return await fallbackToWebSearch(sanitizedQuery);
   }
 
   // Sort documents by date and organize by client
@@ -130,8 +134,12 @@ SUGGESTED_QUESTIONS: (3 alternative questions about topics that ARE covered in t
 
 export async function fallbackToWebSearch(query: string): Promise<RAGResponse> {
   try {
-    // Perform Tavily search
-    const results = await performTavilySearch(query);
+    // Clean query for web search
+    const sanitizedQuery = query.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
+    console.log('🔍 Performing web search with sanitized query:', sanitizedQuery);
+    
+    // Perform Tavily search with sanitized query
+    const results = await performTavilySearch(sanitizedQuery);
     
     if (!results || results.length === 0) {
       return {

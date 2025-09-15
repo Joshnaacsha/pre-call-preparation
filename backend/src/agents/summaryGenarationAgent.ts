@@ -46,14 +46,39 @@ export async function generateMeetingSummary(state: GraphState): Promise<GraphSt
   }
 
   const currentEvent = state.calendarEvents[0];
+  // Extract client name from the event summary (format: "ClientName - ProjectName")
+  const clientName = currentEvent.summary.split('-')[0].trim();
   const projectName = currentEvent.summary.replace(/\(.*?\)/g, '').trim();
+  
+  // Ensure we're working with the correct client data
+  console.log('[Info] Generating summary for client:', clientName);
+  
+  // Reset any cross-contaminated data
+  if (state.previousMeetingsByProject) {
+    const cleanMeetings = Object.entries(state.previousMeetingsByProject)
+      .filter(([key]) => key.toLowerCase().startsWith(clientName.toLowerCase()))
+      .reduce((acc, [key, meetings]) => ({ ...acc, [key]: meetings }), {});
+    state.previousMeetingsByProject = cleanMeetings;
+  }
+  
   const previousMeetings = state.previousMeetingsByProject?.[currentEvent.summary] || [];
-  const externalResearch = state.externalResearch;
+  const externalResearch = {
+    ...state.externalResearch,
+    searchQuery: `${clientName} ${currentEvent.summary.split('-')[1]?.trim() || ''}`
+  };
   const projectNotes = state.projectNotesFromDB?.[projectName] || [];
 
-  console.log('[Info] Generating concise meeting summary...');
+  console.log('[Info] Filtering data for client:', clientName);
+  console.log('[Info] Found matching previous meetings:', previousMeetings.length);
 
-  const meetingType = determineMeetingType(currentEvent, previousMeetings);
+  console.log('[Info] Generating concise meeting summary...');
+  console.log('[Debug] Previous meetings:', JSON.stringify(previousMeetings, null, 2));
+
+  // Ensure safe array operations
+  const safePreviousMeetings = Array.isArray(previousMeetings) ? previousMeetings : [];
+  const safeProjectNotes = Array.isArray(projectNotes) ? projectNotes : [];
+
+  const meetingType = determineMeetingType(currentEvent, safePreviousMeetings);
   console.log(`[Info] Meeting type identified: ${meetingType}`);
 
   const prompt = `
@@ -68,8 +93,12 @@ TYPE: ${meetingType}
 LOCATION: ${currentEvent.location || 'Not specified'}
 ATTENDEES: ${currentEvent.attendees.join(', ')}
 
-PREVIOUS MEETINGS: ${previousMeetings.length} meeting(s)
-${previousMeetings.slice(0, 2).map(m => `• ${m.metadata.summary}: ${m.pageContent.slice(0, 200)}...`).join('\n')}
+PREVIOUS MEETINGS: ${safePreviousMeetings.length} meeting(s)
+${safePreviousMeetings.length > 0 
+  ? safePreviousMeetings.slice(0, 2).map(m => 
+      `• ${m.metadata?.summary || 'Untitled'}: ${(m.pageContent || '').slice(0, 200)}...`
+    ).join('\n')
+  : 'No previous meetings found.'}
 
 PROJECT NOTES FROM DATABASE:
 ${projectNotes.length > 0 ? projectNotes.map(note => `• ${note}`).join('\n') : 'No project notes found in database.'}
@@ -203,6 +232,9 @@ function formatConciseSummary(
     minute: '2-digit'
   });
 
+  // Extract client name from event summary
+  const clientName = currentEvent.summary.split('-')[0].trim();
+
   const previousMeetings = state.previousMeetingsByProject?.[currentEvent.summary] || [];
   const projectNotes = state.projectNotesFromDB?.[projectName] || [];
   // Only show stakeholder insights if we have meaningful data (not errors or limited info)
@@ -219,12 +251,60 @@ function formatConciseSummary(
     state.externalResearch.contactUpdates.length > 100 &&  // Increased minimum length for more meaningful insights
     /\b(role|position|background|experience|responsibility|title)\b/i.test(state.externalResearch.contactUpdates);
 
+  // Only list provided attendees as key stakeholders
+  const providedAttendees = currentEvent.attendees && currentEvent.attendees.length > 0
+    ? currentEvent.attendees.join(', ')
+    : 'Not specified';
+
+  // Expand COMPETITIVE INTELLIGENCE section with more detail if available
+  let competitiveSection = summary.externalIntelligence
+    // Remove metadata and research references
+    .replace(/Hunter\.io|Hunter|research conducted|Research failed|Limited info found|No verifiable|verified data|profile yielded|limited available|AI for \d+ attendee\(s\)/gi, '')
+    .replace(/\s+-\s+limited\s+.*?available\.?/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Add more from companyNews and contactUpdates if available, with clean formatting
+  if (state.externalResearch) {
+    if (state.externalResearch.companyNews && state.externalResearch.companyNews.length > 30) {
+      // Clean up company news and ensure correct client name is used
+      const cleanNews = state.externalResearch.companyNews
+        .replace(/\(Result \d+\)/gi, '')
+        .replace(/Research completed:.*?Analysis/gs, '')
+        .replace(/\b(?:Source|Result)\s*\d+:?\s*/gi, '')
+        .replace(/Kissflow/g, clientName)  // Replace any incorrect client references
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      
+      // Only include if it actually mentions the correct client
+      if (cleanNews && cleanNews.toLowerCase().includes(clientName.toLowerCase())) {
+        competitiveSection += `\n\n**Company News:**\n${cleanNews}`;
+      }
+    }
+    
+    if (state.externalResearch.contactUpdates && state.externalResearch.contactUpdates.length > 30) {
+      // Clean up contact updates by removing research metadata
+      const cleanUpdates = state.externalResearch.contactUpdates
+        .replace(/MEETING INTELLIGENCE.*?Analysis/gs, '')
+        .replace(/STRATEGIC MEETING APPROACH.*?Analysis/gs, '')
+        .replace(/Research completed:.*?Analysis/gs, '')
+        .replace(/\b(?:Source|Result)\s*\d+:?\s*/gi, '')
+        .replace(/•\s*Verified Intelligence:.*$/gm, '')
+        .replace(/•\s*Search Sources:.*$/gm, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      if (cleanUpdates) {
+        competitiveSection += `\n\n**Stakeholder Profile:**\n${cleanUpdates}`;
+      }
+    }
+  }
+
   return `# SALES BRIEFING: ${currentEvent.summary}
 
 **Meeting:** ${date}  
 **Deal Stage:** ${summary.meetingType.toUpperCase()}  
 **Location:** ${currentEvent.location || 'Not specified'}  
-**Key Stakeholders:** ${currentEvent.attendees.join(', ')}
+**Key Stakeholders:** ${providedAttendees}
 
 ---
 
@@ -239,18 +319,7 @@ ${previousMeetings.length > 0 ? `**Sales Cycle:** ${previousMeetings.length} tou
 ${projectNotes.length > 0 ? `**CRM Notes:** ${projectNotes.length} entries logged` : ''}
 
 ## COMPETITIVE INTELLIGENCE & MARKET PRESSURE
-${summary.externalIntelligence
-  .replace(/Hunter\.io|Hunter|research conducted|Research failed|Limited info found|No verifiable|verified data|profile yielded|limited available|AI for \d+ attendee\(s\)/gi, '')
-  .replace(/\s+-\s+limited\s+.*?available\.?/gi, '')
-  .replace(/\s+/g, ' ')
-  .trim()}
-
-${hasAttendeeResearch && state.externalResearch?.contactUpdates ? `\n## KEY STAKEHOLDER INSIGHTS
-${state.externalResearch.contactUpdates
-  .replace(/Hunter\.io|Hunter|research conducted|Research failed|Limited info found|No verifiable|verified data|profile yielded|limited available|AI for \d+ attendee\(s\)/gi, '')
-  .replace(/\s+-\s+limited\s+.*?available\.?/gi, '')
-  .replace(/\s+/g, ' ')
-  .trim()}` : ''}
+${competitiveSection}
 
 ---
 
