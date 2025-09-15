@@ -1,22 +1,15 @@
-import { supabase } from '../supabase/client.js';
+import axios from 'axios';
 import { OpenAIEmbeddings } from '@langchain/openai';
 
-interface SearchResult {
-  id: number;
-  summary: string;
-  description: string;
-  start_time: Date;
-  attendees: string[];
-  location: string;
-  content: string;
-  embedding: number[];
-  metadata: {
-    client_name: string;
-    project_name: string;
-    meeting_goal?: string;
-    summary: string;
-  };
-  similarity: number;
+interface GraphEvent {
+  id: string;
+  subject: string;
+  bodyPreview: string;
+  start: { dateTime: string; timeZone: string };
+  end: { dateTime: string; timeZone: string };
+  attendees: Array<{ emailAddress: { address: string; name: string } }>;
+  location: { displayName: string };
+  body: { content: string };
 }
 
 interface ConvertedResult {
@@ -31,44 +24,6 @@ interface ConvertedResult {
 
 const embeddings = new OpenAIEmbeddings();
 
-// Helper function to convert search results to the expected format
-function convertToExpectedFormat(results: SearchResult[], projectName: string): ConvertedResult[] {
-  return results.map((result: SearchResult): ConvertedResult => {
-    // Ensure metadata exists
-    if (!result.metadata) {
-      result.metadata = {
-        client_name: 'Unknown Client',
-        project_name: projectName || 'Unknown Project',
-        summary: result.summary || ''
-      };
-    }
-    // Safely handle the date conversion
-    let startTime = '';
-    try {
-      if (result.start_time instanceof Date) {
-        startTime = result.start_time.toISOString();
-      } else if (typeof result.start_time === 'string') {
-        startTime = new Date(result.start_time).toISOString();
-      } else {
-        startTime = new Date().toISOString(); // Fallback to current date if invalid
-      }
-    } catch (error) {
-      console.warn(`Invalid date for meeting: ${result.summary}`);
-      startTime = new Date().toISOString(); // Fallback to current date
-    }
-
-    return {
-      metadata: {
-        summary: result.summary,
-        startTime,
-        client_name: result.metadata.client_name,
-        project_name: result.metadata.project_name
-      },
-      pageContent: result.content
-    };
-  });
-}
-
 function cosineSimilarity(vecA: number[], vecB: number[]): number {
   const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
   const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
@@ -77,91 +32,59 @@ function cosineSimilarity(vecA: number[], vecB: number[]): number {
 }
 
 /**
- * Search previous meetings excluding the current one by startTime
- * @param {string} projectName - Project name to search with
+ * Search previous meetings using Microsoft Graph events, excluding the current one by startTime
+ * @param {string} projectName - Project name or client name to search with
  * @param {string} currentStartTime - ISO start time of the current meeting
+ * @param {string} accessToken - Microsoft Graph access token
  * @returns {Promise<Array>} - Top 3 similar meetings excluding the current
  */
 export const searchPreviousMeetings = async (
   projectName: string,
-  currentStartTime: string
+  currentStartTime: string,
+  accessToken: string
 ) => {
-  console.log(`🔍 Searching for previous meetings matching: "${projectName}"`);
-  
-  // First, get a broader set of potential matches
-  let { data: initialResults, error: initialError } = await supabase
-    .from('meetings')
-    .select('*')
-    .lt('meeting_date', currentStartTime)
-    .order('meeting_date', { ascending: false })
-    .limit(50);  // Get a larger initial set for semantic analysis
-
-  if (initialError) {
-    console.error('Error in initial search:', initialError);
+  // Fetch previous events from Microsoft Graph (before currentStartTime)
+  let events: GraphEvent[] = [];
+  try {
+    const response = await axios.get<{ value: GraphEvent[] }>('https://graph.microsoft.com/v1.0/me/events', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      },
+      params: {
+        $orderby: 'start/dateTime desc',
+        $top: 50,
+        $filter: `start/dateTime lt '${currentStartTime}'`
+      }
+    });
+    events = response.data.value || [];
+  } catch (error) {
+    console.error('Error fetching events from Microsoft Graph:', error);
     return [];
   }
 
-  console.log(`📊 Found ${initialResults?.length || 0} initial meetings to analyze`);
-
-  if (initialResults && initialResults.length > 0) {
-    // Log some sample data for debugging
-    const sampleMeeting = initialResults[0];
-    console.log('Sample meeting data structure:', {
-      id: sampleMeeting.id,
-      metadata: sampleMeeting.metadata,
-      summary: sampleMeeting.summary,
-      date: sampleMeeting.meeting_date
-    });
-  }
-
-  // Clean and normalize the project name for comparison
-  const normalizedProjectName = projectName.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
-  console.log(`🔄 Normalized search term: "${normalizedProjectName}"`);
-
-  // First try direct matching before semantic search
-  const directMatches = initialResults?.filter(result => {
-    const clientName = result.metadata?.client_name?.toLowerCase() || '';
-    const projectNameMatch = result.metadata?.project_name?.toLowerCase() || '';
-    const summary = result.summary?.toLowerCase() || '';
-    
-    return clientName.includes(normalizedProjectName) || 
-           projectNameMatch.includes(normalizedProjectName) ||
-           summary.includes(normalizedProjectName);
-  });
-
-  if (directMatches && directMatches.length > 0) {
-    console.log(`✅ Found ${directMatches.length} direct matches`);
-    return convertToExpectedFormat(directMatches.slice(0, 3), projectName);
-  }
-
-  console.log('⚡ No direct matches found, trying semantic search...');
-
-  // Use LLM embeddings to compare both client and project name for fuzzy matching
+  // Use LLM embeddings to compare project/client name for fuzzy matching
   const currentMeetingString = `Client: ${projectName}`;
   const currentEmbedding = await embeddings.embedQuery(currentMeetingString);
 
-  // Calculate semantic similarity for each previous meeting (client+project)
+  // Calculate semantic similarity for each previous event
   const scoredResults = await Promise.all(
-    (initialResults || []).map(async (result) => {
-      const prevMeetingString = `Client: ${result.metadata?.client_name || ''}, Project: ${result.metadata?.project_name || ''}, Summary: ${result.summary || ''}`;
+    (events || []).map(async (event) => {
+      // Try to extract client/project name from subject or body
+      const subject = event.subject || '';
+      const body = event.bodyPreview || '';
+      const prevMeetingString = `Client: ${subject}, Body: ${body}`;
       const prevEmbedding = await embeddings.embedQuery(prevMeetingString);
       const similarity = cosineSimilarity(currentEmbedding, prevEmbedding);
       return {
-        ...result,
+        ...event,
         semanticScore: similarity
       };
     })
   );
 
-  console.log('📊 Semantic analysis completed');
-
-  // Lower semantic threshold and log scores for debugging
+  // Lower semantic threshold for candidate pool
   const candidateResults = scoredResults
-    .map(result => {
-      console.log(`Score for "${result.metadata?.client_name || result.summary}": ${result.semanticScore.toFixed(3)}`);
-      return result;
-    })
-    .filter(result => result.semanticScore > 0.70) // Lower threshold for better recall
+    .filter(result => result.semanticScore > 0.80)
     .sort((a, b) => b.semanticScore - a.semanticScore)
     .slice(0, 20);
 
@@ -203,38 +126,23 @@ export const searchPreviousMeetings = async (
 
   console.log(`🔍 Found ${fuzzyRelevantResults.length} LLM-matched meetings for client: ${projectName}`);
   // Convert relevant results to the expected format, with safe date handling
-  const converted = fuzzyRelevantResults.map((result: SearchResult): ConvertedResult => {
-    // Ensure metadata exists
-    if (!result.metadata) {
-      result.metadata = {
-        client_name: 'Unknown Client',
-        project_name: projectName || 'Unknown Project',
-        summary: result.summary || ''
-      };
-    }
-    // Safely handle the date conversion
+  const converted = fuzzyRelevantResults.map((event: GraphEvent): ConvertedResult => {
     let startTime = '';
     try {
-      if (result.start_time instanceof Date) {
-        startTime = result.start_time.toISOString();
-      } else if (typeof result.start_time === 'string') {
-        startTime = new Date(result.start_time).toISOString();
-      } else {
-        startTime = new Date().toISOString(); // Fallback to current date if invalid
-      }
+      startTime = event.start?.dateTime
+        ? new Date(event.start.dateTime).toISOString()
+        : new Date().toISOString();
     } catch (error) {
-      console.warn(`Invalid date for meeting: ${result.summary}`);
-      startTime = new Date().toISOString(); // Fallback to current date
+      startTime = new Date().toISOString();
     }
-
     return {
       metadata: {
-        summary: result.summary,
+        summary: event.subject || '',
         startTime,
-        client_name: result.metadata.client_name,
-        project_name: result.metadata.project_name
+        client_name: event.subject || '',
+        project_name: event.subject || ''
       },
-      pageContent: result.content
+      pageContent: event.body?.content || event.bodyPreview || ''
     };
   });
 

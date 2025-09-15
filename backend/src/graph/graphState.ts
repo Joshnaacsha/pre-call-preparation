@@ -5,7 +5,6 @@ export interface CalendarEvent {
   description: string;
   attendees: string[];
   location: string;
-  organizer?: string; // The email of the person who created the event
 }
 
 export interface RetrievedMeeting {

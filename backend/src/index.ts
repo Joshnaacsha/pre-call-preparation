@@ -474,7 +474,9 @@ async function main(initialState?: GraphState, req?: any): Promise<GraphState> {
 
       // Step 3a: Search for previous meetings for this specific event
       console.log(`   🔍 Searching previous meetings for "${currentEvent.summary}"...`);
-  const results = await searchPreviousMeetings(currentEvent.summary, currentEvent.startTime);
+  // You must provide the Microsoft Graph access token from the session or context
+  const accessToken = process.env.MS_GRAPH_ACCESS_TOKEN || '';
+  const results = await searchPreviousMeetings(currentEvent.summary, currentEvent.startTime, accessToken);
       
       const convertedMeetings: RetrievedMeeting[] = results.map((doc: { metadata: any; pageContent: any; }) => {
         const { metadata, pageContent } = doc;
@@ -658,7 +660,9 @@ async function main(initialState?: GraphState, req?: any): Promise<GraphState> {
   console.log(`   - Company Research: ${hasTavily ? 'Tavily (Enabled)' : 'Disabled'}`);
   console.log(`   - Meeting Summaries: ${hasGemini ? 'Gemini (Enabled)' : 'Disabled'}`);
 
-  
+  if (!hasHunter && hasOpenAI) {
+    console.log(`\n💡 TIP: Add HUNTER_API_KEY to .env for enhanced attendee research with verified professional data!`);
+  }
 
   console.log('\n✅ Pre-call preparation pipeline completed successfully!');
   return state;
@@ -788,8 +792,7 @@ async function handleMeetingRequest(
   message: string, 
   context: string | undefined, 
   sessionId: string, 
-  res: Response,
-  req: any
+  res: Response
 ): Promise<Response> {
   console.log('Processing meeting preparation request...');
   
@@ -814,7 +817,7 @@ async function handleMeetingRequest(
       clearConversationState(sessionId);
       
       // Run the research pipeline and wait for results
-      const researchedState = await runFullResearchPipeline(chatResult.graphState, req);
+      const researchedState = await runFullResearchPipeline(chatResult.graphState);
 
       // Return the comprehensive results to the user
       return res.json({
@@ -853,7 +856,7 @@ async function handleMeetingRequest(
 }
 
 // Chat-specific research pipeline function
-async function runFullResearchPipeline(initialState: GraphState, req?: any): Promise<GraphState> {
+async function runFullResearchPipeline(initialState: GraphState): Promise<GraphState> {
   console.log('\nStarting full research pipeline for chat-initiated meeting...');
   console.log('='.repeat(60));
   
@@ -869,7 +872,9 @@ async function runFullResearchPipeline(initialState: GraphState, req?: any): Pro
 
     // Step 1: Search for previous meetings
     console.log('Searching previous meetings...');
-    const results = await searchPreviousMeetings(currentEvent.summary, currentEvent.startTime);
+  // You must provide the Microsoft Graph access token from the session or context
+  const accessToken = process.env.MS_GRAPH_ACCESS_TOKEN || '';
+  const results = await searchPreviousMeetings(currentEvent.summary, currentEvent.startTime, accessToken);
     
     const convertedMeetings: RetrievedMeeting[] = results.map((doc: { metadata: any; pageContent: any; }) => {
       const { metadata, pageContent } = doc;
@@ -1064,7 +1069,7 @@ app.post('/api/chat', async (req, res) => {
     // Handle based on route
     switch (route) {
       case 'meeting_collection':
-        return await handleMeetingRequest(message, context, sessionId, res, req);
+        return await handleMeetingRequest(message, context, sessionId, res);
       
       case 'summary_search':
         return await handleSummarySearch(message, res);

@@ -1,8 +1,8 @@
 import puppeteer from 'puppeteer';
+import nodemailer from 'nodemailer';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-import fetch from 'node-fetch';
 import type { GraphState, CalendarEvent } from '../graph/graphState.js';
 import { hasPdfBeenGenerated, markPdfAsGenerated } from '../calendar/listEvents.js';
 
@@ -15,10 +15,6 @@ interface EmailConfig {
   auth: {
     user: string;
     pass: string;
-  };
-  tls?: {
-    ciphers?: string;
-    rejectUnauthorized?: boolean;
   };
 }
 
@@ -364,27 +360,11 @@ function convertMarkdownToHtml(markdown: string, event: CalendarEvent): string {
 }
 
 function findCprimeSalesPerson(event: CalendarEvent): string | null {
-  // First check the organizer if available
-  if (event.organizer) {
-    const orgEmail = event.organizer.toLowerCase();
-    if (orgEmail.includes('@cprime.com') || orgEmail.includes('licet.ac.in')) {
-      console.log(`   👤 Found organizer as Cprime contact: ${event.organizer}`);
-      return event.organizer;
-    }
-  }
-  
-  // Then check all attendees
   const cprimeAttendee = event.attendees.find(email => 
-    email.toLowerCase().includes('licet.ac.in') ||
-    email.toLowerCase().includes('@cprime.com')
+    email.toLowerCase().includes('licet.ac.in')
   );
   
-  if (cprimeAttendee) {
-    console.log(`   👥 Found attendee as Cprime contact: ${cprimeAttendee}`);
-    return cprimeAttendee;
-  }
-  
-  return null;
+  return cprimeAttendee || null;
 }
 
 function convertSummaryToEmailHtml(summary: string): string {
@@ -410,62 +390,19 @@ async function sendEmailWithPdf(
   event: CalendarEvent,
   summary: string
 ): Promise<void> {
-  // Read the PDF file
-  const pdfContent = fs.readFileSync(pdfPath);
-  const pdfBase64 = pdfContent.toString('base64');
+  const emailConfig: EmailConfig = {
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: false,
+    auth: {
+      user: process.env.SMTP_USER || '',
+      pass: process.env.SMTP_PASS || '',
+    },
+  };
 
-  // Get access token using refresh token if needed
-  let accessToken = process.env.MS_GRAPH_ACCESS_TOKEN;
-  const refreshToken = process.env.MS_GRAPH_REFRESH_TOKEN;
-  const clientId = process.env.MS_CLIENT_ID;
-  const clientSecret = process.env.MS_CLIENT_SECRET;
-  const tenantId = process.env.MS_TENANT_ID;
+  const transporter = nodemailer.createTransport(emailConfig);
 
-  if (!refreshToken || !clientId || !clientSecret || !tenantId) {
-    throw new Error('Missing required Microsoft Graph credentials. Run auth/getGraphToken.ts to set up authentication.');
-  }
-
-  // If no access token or it's expired, get a new one using refresh token
-  if (!accessToken) {
-    const tokenResponse = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token',
-        scope: 'offline_access Mail.Send Mail.ReadWrite'
-      })
-    });
-
-    if (!tokenResponse.ok) {
-      const error = await tokenResponse.json();
-      throw new Error(`Failed to refresh access token: ${JSON.stringify(error)}`);
-    }
-
-    interface TokenResponse {
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-    }
-
-    const tokens = await tokenResponse.json() as TokenResponse;
-    accessToken = tokens.access_token;
-
-    // You might want to save the new tokens here
-    console.log('⚠️ Access token refreshed. You may want to update MS_GRAPH_ACCESS_TOKEN in your .env file');
-  }
-
-  // Calculate email timing and urgency information
-  const now = new Date();
-  const meetingTime = new Date(event.startTime);
-  const diffMs = meetingTime.getTime() - now.getTime();
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-  const meetingDate = meetingTime.toLocaleDateString('en-US', {
+  const meetingDate = new Date(event.startTime).toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -474,17 +411,25 @@ async function sendEmailWithPdf(
     minute: '2-digit'
   });
 
-  // Generate email subject with urgency prefix
+  // Calculate urgency for email subject
+  const now = new Date();
+  const meetingTime = new Date(event.startTime);
+  const diffMs = meetingTime.getTime() - now.getTime();
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+  
   let urgencyPrefix = '';
   if (diffHours < 1) {
     urgencyPrefix = '🚨 URGENT - ';
   } else if (diffHours <= 2) {
     urgencyPrefix = '⏰ SOON - ';
   }
-  const emailSubject = `${urgencyPrefix}📋 Pre-Call Briefing: ${event.summary}`;
 
-  // Convert summary to HTML and prepare urgency banner
+  const emailSubject = `${urgencyPrefix}📋 Pre-Call Briefing: ${event.summary}`;
+  
   const summaryHtml = convertSummaryToEmailHtml(summary);
+  
+  // Add urgency banner to email if needed
   let urgencyBanner = '';
   if (diffHours < 1) {
     urgencyBanner = `
@@ -499,12 +444,11 @@ async function sendEmailWithPdf(
       </div>
     `;
   }
-
-  // Generate the email body
+  
   const emailBody = `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px;">
       <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 8px; margin-bottom: 25px;">
-        <h1 style="margin: 0; color: white; font-size: 24px;">� Cprime Pre-Call Briefing</h1>
+        <h1 style="margin: 0; color: white; font-size: 24px;">🚀 Cprime Pre-Call Briefing</h1>
         <p style="margin: 8px 0 0 0; font-size: 16px; opacity: 0.9;">Confidential & Internal Use Only</p>
       </div>
       
@@ -532,51 +476,21 @@ async function sendEmailWithPdf(
     </div>
   `;
 
-  // Prepare the email message with all the content we generated earlier
-  const message = {
-    message: {
-      subject: emailSubject,
-      body: {
-        contentType: 'HTML',
-        content: emailBody
-      },
-      toRecipients: [
-        {
-          emailAddress: {
-            address: recipientEmail
-          }
-        }
-      ],
-      attachments: [
-        {
-          '@odata.type': '#microsoft.graph.fileAttachment',
-          name: path.basename(pdfPath),
-          contentType: 'application/pdf',
-          contentBytes: pdfBase64
-        }
-      ]
-    }
+  const mailOptions = {
+    from: `"Cprime AI Assistant" <${emailConfig.auth.user}>`,
+    to: recipientEmail,
+    subject: emailSubject,
+    html: emailBody,
+    attachments: [
+      {
+        filename: path.basename(pdfPath),
+        path: pdfPath,
+        contentType: 'application/pdf'
+      }
+    ]
   };
 
-  // Send email using Microsoft Graph API with delegated permissions
-  try {
-    const response = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(message)
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Failed to send email: ${JSON.stringify(errorData)}`);
-    }
-  } catch (error) {
-    console.error('Failed to send email:', error);
-    throw error;
-  }
+  await transporter.sendMail(mailOptions);
 }
 
 // Enhanced GraphState interface to include PDF path

@@ -89,7 +89,7 @@ export async function listUpcomingEvents(accessToken: string): Promise<GraphStat
   console.log(`🌍 Using timezone: ${timeZone}`);
 
   // Query Microsoft Graph with more detailed fields and proper time filtering
-  const url = `https://graph.microsoft.com/v1.0/me/calendarview?startDateTime=${now.toISOString()}&endDateTime=${threeHoursLater.toISOString()}&$select=subject,start,end,bodyPreview,attendees,location,organizer&$orderby=start/dateTime`;
+  const url = `https://graph.microsoft.com/v1.0/me/calendarview?startDateTime=${now.toISOString()}&endDateTime=${threeHoursLater.toISOString()}&$select=subject,start,end,bodyPreview,attendees,location&$orderby=start/dateTime`;
   const resp = await axios.get(url, {
     headers: { Authorization: `Bearer ${accessToken}` }
   });
@@ -151,7 +151,6 @@ export async function listUpcomingEvents(accessToken: string): Promise<GraphStat
       description: event.bodyPreview || '',
       attendees: (event.attendees?.map((a: any) => a.emailAddress?.address).filter((email: any): email is string => !!email)) || [],
       location: event.location?.displayName || '',
-      organizer: event.organizer?.emailAddress?.address || ''
     };
   });
 
