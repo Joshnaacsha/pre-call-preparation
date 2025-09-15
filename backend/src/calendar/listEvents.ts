@@ -1,9 +1,8 @@
-import { google } from 'googleapis';
 import type { CalendarEvent, GraphState } from '../graph/graphState.js';
-import { OAuth2Client } from 'google-auth-library';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import axios from 'axios';
 
 // Configuration for filtering events
 const FILTER_CONFIG = {
@@ -25,7 +24,15 @@ const FILTER_CONFIG = {
     'stakeholder',
     'prospect',
     'sales',
-    'business'
+    'business',
+    'meet',
+    'meeting',
+    'sync',
+    'discussion',
+    'call',
+    'chat',
+    'standup',
+    'status'
   ],
   
   // Internal email domains to exclude when looking for external attendees
@@ -35,7 +42,7 @@ const FILTER_CONFIG = {
     '@cprimetechnologies.com'
   ],
   
-  // Minimum number of external attendees required
+  // Minimum number of external attendees required - set to 0 to include all meetings
   minExternalAttendees: 1,
   
   // PDF tracking file path
@@ -55,29 +62,47 @@ interface PDFTrackingData {
   [eventId: string]: PDFTrackingRecord;
 }
 
-export async function listUpcomingEvents(auth: OAuth2Client): Promise<GraphState> {
-  const calendar = google.calendar({ version: 'v3', auth });
-  
-  // Calculate time window (next 3 hours)
+// List upcoming events using Microsoft Graph API
+export async function listUpcomingEvents(accessToken: string): Promise<GraphState> {
+  if (!accessToken) {
+    console.error('❌ No access token provided to listUpcomingEvents');
+    throw new Error('Access token is required');
+  }
+
+  // Calculate time window (next 3 hours) in UTC
   const now = new Date();
   const threeHoursLater = new Date(now.getTime() + (FILTER_CONFIG.upcomingHoursWindow * 60 * 60 * 1000));
   
-  console.log(`🕐 Looking for meetings between:`);
-  console.log(`   From: ${now.toLocaleString()}`);
-  console.log(`   To:   ${threeHoursLater.toLocaleString()}`);
+  // Debug logging for time window calculation
+  console.log('🔍 Time window calculation:');
+  console.log(`   Current time (UTC): ${now.toISOString()}`);
+  console.log(`   End window (UTC): ${threeHoursLater.toISOString()}`);
 
-  const res = await calendar.events.list({
-    calendarId: 'primary',
-    timeMin: now.toISOString(),
-    timeMax: threeHoursLater.toISOString(), // Only next 3 hours
-    maxResults: 50,
-    singleEvents: true,
-    orderBy: 'startTime',
+  console.log(`🕐 Looking for meetings between:`);
+  console.log(`   From: ${now.toLocaleString()} (${now.toISOString()})`);
+  console.log(`   To:   ${threeHoursLater.toLocaleString()} (${threeHoursLater.toISOString()})`);
+  console.log(`   Time window: ${FILTER_CONFIG.upcomingHoursWindow} hours`);
+
+  // Query Microsoft Graph /me/events
+  // Get local timezone offset
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  console.log(`🌍 Using timezone: ${timeZone}`);
+
+  // Query Microsoft Graph with more detailed fields and proper time filtering
+  const url = `https://graph.microsoft.com/v1.0/me/calendarview?startDateTime=${now.toISOString()}&endDateTime=${threeHoursLater.toISOString()}&$select=subject,start,end,bodyPreview,attendees,location,organizer&$orderby=start/dateTime`;
+  const resp = await axios.get(url, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  console.log('📡 Raw API Response:', {
+    status: resp.status,
+    statusText: resp.statusText,
+    headers: resp.headers,
   });
 
-  const events = res.data.items;
+  const events = (resp.data as any).value;
   if (!events || events.length === 0) {
     console.log('❌ No upcoming events found in the next 3 hours.');
+    console.log('Full response:', JSON.stringify(resp.data, null, 2));
     return {
       calendarEvents: [],
       externalResearch: {
@@ -88,31 +113,66 @@ export async function listUpcomingEvents(auth: OAuth2Client): Promise<GraphState
     };
   }
 
+  // Debug: Print raw event data
+  console.log('\n📅 Raw calendar data:');
+  events.forEach((event: any) => {
+    console.log('\nEvent:', {
+      subject: event.subject,
+      start: event.start,
+      end: event.end,
+      attendees: event.attendees?.map((a: any) => a.emailAddress?.address),
+      bodyPreview: event.bodyPreview?.substring(0, 100) + '...'
+    });
+  });
+
   // Convert to structured events with event IDs for tracking
-  const allStructuredEvents: (CalendarEvent & { eventId: string })[] = events.map(event => ({
-    eventId: event.id || generateEventId(event),
-    startTime: event.start?.dateTime || event.start?.date || '',
-    summary: event.summary || 'No title',
-    description: event.description || '',
-    attendees: (event.attendees?.map(a => a.email).filter((email): email is string => !!email)) || [],
-    location: event.location || '',
-  }));
+  const allStructuredEvents: (CalendarEvent & { eventId: string })[] = events.map((event: any) => {
+    // Parse the date time - Microsoft Graph returns UTC times
+    const startDateTime = event.start?.dateTime;
+    const startTimeZone = event.start?.timeZone || 'UTC';
+    
+    // Handle the UTC time from Microsoft Graph API
+    let startTime: string;
+    if (startDateTime) {
+      // Microsoft Graph returns UTC times, just append Z if not present
+      startTime = startDateTime.endsWith('Z') ? startDateTime : startDateTime + 'Z';
+    } else {
+      startTime = event.start?.date || '';
+    }
+
+    console.log('   [Debug] Event time parsing:');
+    console.log(`          Original: ${startDateTime} (${startTimeZone})`);
+    console.log(`          Parsed: ${startTime}`);
+    
+    return {
+      eventId: event.id,
+      startTime,
+      summary: event.subject || 'No title',
+      description: event.bodyPreview || '',
+      attendees: (event.attendees?.map((a: any) => a.emailAddress?.address).filter((email: any): email is string => !!email)) || [],
+      location: event.location?.displayName || '',
+      organizer: event.organizer?.emailAddress?.address || ''
+    };
+  });
 
   console.log(`📅 Found ${allStructuredEvents.length} total events in next 3 hours`);
 
   // Apply client/external filters
   const clientEvents = allStructuredEvents.filter(event => {
+    const isInTimeWindow = isEventInTimeWindow(event.startTime, now, threeHoursLater);
     const passesClientFilter = hasClientKeywords(event.summary);
     const passesAttendeeFilter = hasExternalAttendees(event.attendees);
-    const isInTimeWindow = isEventInTimeWindow(event.startTime, now, threeHoursLater);
     
     console.log(`\n🔍 Filtering Event: "${event.summary}"`);
     console.log(`   Time: ${new Date(event.startTime).toLocaleString()}`);
     console.log(`   In time window: ${isInTimeWindow ? '✅' : '❌'}`);
-    console.log(`   Client keywords: ${passesClientFilter ? '✅' : '❌'}`);
-    console.log(`   External attendees: ${passesAttendeeFilter ? '✅' : '❌'}`);
-    
-    return isInTimeWindow && (passesClientFilter || passesAttendeeFilter);
+    console.log(`   Keywords matched: ${passesClientFilter ? '✅' : '❌'}`);
+    console.log(`   Attendees check: ${passesAttendeeFilter ? '✅' : '❌'}`);
+
+    // Include events that are in time window AND (have client keywords OR external attendees)
+    const shouldInclude = isInTimeWindow && (passesClientFilter || passesAttendeeFilter);
+    console.log(`   Final decision: ${shouldInclude ? '✅ Including' : '❌ Excluding'}`);
+    return shouldInclude;
   });
 
   console.log(`\n📋 Found ${clientEvents.length} client meetings in next 3 hours:`);
@@ -224,10 +284,10 @@ export function markPdfAsGenerated(event: CalendarEvent, pdfPath: string, eventI
 /**
  * Get all client meetings that need PDF generation
  */
-export async function getClientMeetingsForPdfGeneration(auth: OAuth2Client): Promise<(CalendarEvent & { eventId: string })[]> {
-  const result = await listUpcomingEvents(auth);
+// Get all client meetings that need PDF generation using MS Graph
+export async function getClientMeetingsForPdfGeneration(accessToken: string): Promise<(CalendarEvent & { eventId: string })[]> {
+  const result = await listUpcomingEvents(accessToken);
   const clientEventIds = (result as any).clientEventIds || [];
-  
   // Filter out meetings that already have PDFs generated
   const meetingsNeedingPdfs = result.calendarEvents.map((event, index) => ({
     ...event,
@@ -239,11 +299,9 @@ export async function getClientMeetingsForPdfGeneration(auth: OAuth2Client): Pro
     }
     return needsPdf;
   });
-
   console.log(`\n📊 Summary:`);
   console.log(`   Total client meetings in next 3 hours: ${result.calendarEvents.length}`);
   console.log(`   Meetings needing new PDFs: ${meetingsNeedingPdfs.length}`);
-
   return meetingsNeedingPdfs;
 }
 
@@ -268,8 +326,30 @@ function generateEventHash(event: CalendarEvent): string {
 }
 
 function isEventInTimeWindow(eventStartTime: string, windowStart: Date, windowEnd: Date): boolean {
+  // Parse event time ensuring it's treated as UTC
   const eventTime = new Date(eventStartTime);
-  return eventTime >= windowStart && eventTime <= windowEnd;
+  
+  // Validate that we have a valid date
+  if (isNaN(eventTime.getTime())) {
+    console.log(`   [Debug] Invalid event time: ${eventStartTime}`);
+    return false;
+  }
+  
+  const eventTimeUtc = eventTime.getTime();
+  const windowStartUtc = windowStart.getTime();
+  const windowEndUtc = windowEnd.getTime();
+  
+  // Debug logging
+  console.log('   [Debug] Time comparison:');
+  console.log(`          Event time (UTC): ${eventTime.toISOString()} (${eventTimeUtc})`);
+  console.log(`          Window start (UTC): ${windowStart.toISOString()} (${windowStartUtc})`);
+  console.log(`          Window end (UTC): ${windowEnd.toISOString()} (${windowEndUtc})`);
+  
+  // Compare timestamps - event should be after window start and before/at window end
+  const isInWindow = eventTimeUtc >= windowStartUtc && eventTimeUtc <= windowEndUtc;
+  console.log(`          Is in window: ${isInWindow}`);
+  
+  return isInWindow;
 }
 
 function getTimeUntilMeeting(startTime: string): string {
@@ -279,7 +359,9 @@ function getTimeUntilMeeting(startTime: string): string {
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
   const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
   
-  if (diffHours > 0) {
+  if (diffMs < 0) {
+    return 'started';
+  } else if (diffHours > 0) {
     return `in ${diffHours}h ${diffMinutes}m`;
   } else {
     return `in ${diffMinutes}m`;

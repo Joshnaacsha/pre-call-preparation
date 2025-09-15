@@ -31,9 +31,44 @@ interface ConvertedResult {
 
 const embeddings = new OpenAIEmbeddings();
 
-/**
- * Calculate cosine similarity between two vectors
- */
+// Helper function to convert search results to the expected format
+function convertToExpectedFormat(results: SearchResult[], projectName: string): ConvertedResult[] {
+  return results.map((result: SearchResult): ConvertedResult => {
+    // Ensure metadata exists
+    if (!result.metadata) {
+      result.metadata = {
+        client_name: 'Unknown Client',
+        project_name: projectName || 'Unknown Project',
+        summary: result.summary || ''
+      };
+    }
+    // Safely handle the date conversion
+    let startTime = '';
+    try {
+      if (result.start_time instanceof Date) {
+        startTime = result.start_time.toISOString();
+      } else if (typeof result.start_time === 'string') {
+        startTime = new Date(result.start_time).toISOString();
+      } else {
+        startTime = new Date().toISOString(); // Fallback to current date if invalid
+      }
+    } catch (error) {
+      console.warn(`Invalid date for meeting: ${result.summary}`);
+      startTime = new Date().toISOString(); // Fallback to current date
+    }
+
+    return {
+      metadata: {
+        summary: result.summary,
+        startTime,
+        client_name: result.metadata.client_name,
+        project_name: result.metadata.project_name
+      },
+      pageContent: result.content
+    };
+  });
+}
+
 function cosineSimilarity(vecA: number[], vecB: number[]): number {
   const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
   const magnitudeA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
@@ -51,7 +86,8 @@ export const searchPreviousMeetings = async (
   projectName: string,
   currentStartTime: string
 ) => {
-
+  console.log(`🔍 Searching for previous meetings matching: "${projectName}"`);
+  
   // First, get a broader set of potential matches
   let { data: initialResults, error: initialError } = await supabase
     .from('meetings')
@@ -65,6 +101,40 @@ export const searchPreviousMeetings = async (
     return [];
   }
 
+  console.log(`📊 Found ${initialResults?.length || 0} initial meetings to analyze`);
+
+  if (initialResults && initialResults.length > 0) {
+    // Log some sample data for debugging
+    const sampleMeeting = initialResults[0];
+    console.log('Sample meeting data structure:', {
+      id: sampleMeeting.id,
+      metadata: sampleMeeting.metadata,
+      summary: sampleMeeting.summary,
+      date: sampleMeeting.meeting_date
+    });
+  }
+
+  // Clean and normalize the project name for comparison
+  const normalizedProjectName = projectName.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+  console.log(`🔄 Normalized search term: "${normalizedProjectName}"`);
+
+  // First try direct matching before semantic search
+  const directMatches = initialResults?.filter(result => {
+    const clientName = result.metadata?.client_name?.toLowerCase() || '';
+    const projectNameMatch = result.metadata?.project_name?.toLowerCase() || '';
+    const summary = result.summary?.toLowerCase() || '';
+    
+    return clientName.includes(normalizedProjectName) || 
+           projectNameMatch.includes(normalizedProjectName) ||
+           summary.includes(normalizedProjectName);
+  });
+
+  if (directMatches && directMatches.length > 0) {
+    console.log(`✅ Found ${directMatches.length} direct matches`);
+    return convertToExpectedFormat(directMatches.slice(0, 3), projectName);
+  }
+
+  console.log('⚡ No direct matches found, trying semantic search...');
 
   // Use LLM embeddings to compare both client and project name for fuzzy matching
   const currentMeetingString = `Client: ${projectName}`;
@@ -73,7 +143,7 @@ export const searchPreviousMeetings = async (
   // Calculate semantic similarity for each previous meeting (client+project)
   const scoredResults = await Promise.all(
     (initialResults || []).map(async (result) => {
-      const prevMeetingString = `Client: ${result.metadata?.client_name || ''}, Project: ${result.metadata?.project_name || ''}`;
+      const prevMeetingString = `Client: ${result.metadata?.client_name || ''}, Project: ${result.metadata?.project_name || ''}, Summary: ${result.summary || ''}`;
       const prevEmbedding = await embeddings.embedQuery(prevMeetingString);
       const similarity = cosineSimilarity(currentEmbedding, prevEmbedding);
       return {
@@ -83,9 +153,15 @@ export const searchPreviousMeetings = async (
     })
   );
 
-  // Lower semantic threshold for candidate pool
+  console.log('📊 Semantic analysis completed');
+
+  // Lower semantic threshold and log scores for debugging
   const candidateResults = scoredResults
-    .filter(result => result.semanticScore > 0.80)
+    .map(result => {
+      console.log(`Score for "${result.metadata?.client_name || result.summary}": ${result.semanticScore.toFixed(3)}`);
+      return result;
+    })
+    .filter(result => result.semanticScore > 0.70) // Lower threshold for better recall
     .sort((a, b) => b.semanticScore - a.semanticScore)
     .slice(0, 20);
 
@@ -114,7 +190,8 @@ export const searchPreviousMeetings = async (
   // Filter candidates using LLM for company name match
   const fuzzyRelevantResults = [];
   for (const result of candidateResults) {
-    const prevName = result.metadata?.client_name || '';
+    // Try to extract company/client name from subject
+    const prevName = result.subject || '';
     const isMatch = await isSameCompany(projectName, prevName);
     if (isMatch) fuzzyRelevantResults.push(result);
   }

@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import './config/env.js';
 import { authorizeAndListEvents } from './calendar/authorize.js';
 import { embedAndStoreAllEvents } from './embeddings/embedAndStore.js';
 import { 
@@ -21,38 +21,54 @@ import { hasPdfBeenGenerated, markPdfAsGenerated } from './calendar/listEvents.j
 import type { GraphState, RetrievedMeeting } from './graph/graphState.js';
 import fs from 'fs';
 import path from 'path';
-import { google } from 'googleapis';
-import { listUpcomingEvents } from './calendar/listEvents.js';
-
-dotenv.config();
+// import { google } from 'googleapis';
+// import { listUpcomingEvents } from './calendar/listEvents.js';
 
 const app = express();
 
 // Configure CORS
 app.use(cors({
-  origin: ['http://localhost:3001', 'http://localhost:3002', 'http://192.168.56.1:3002', 'http://localhost:5173', 'http://127.0.0.1:5173'],
+  origin: function(origin, callback) {
+    const allowedOrigins = ['http://localhost:3001', 'http://localhost:3002', 'http://192.168.56.1:3002', 'http://localhost:5173', 'http://127.0.0.1:5173'];
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,
   optionsSuccessStatus: 200,
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
 
+// Configure Content-Security-Policy
+app.use((req, res, next) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; connect-src 'self' http: https: ws:; frame-src 'self' https://login.microsoftonline.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'"
+  );
+  next();
+});
+
 app.use(express.json());
 
-// Google OAuth setup
-const SCOPES = [
-  'https://www.googleapis.com/auth/calendar.readonly',
-  'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/userinfo.profile'
-];
+// Configure session middleware
+import session from 'express-session';
 
-const TOKEN_PATH = path.resolve(process.cwd(), 'src/auth/token.json');
+app.use(session({
+  secret: 'your-session-secret', // Replace with a real secret in production
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
 
-const oAuth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
-);
+// Microsoft Graph OAuth and calendar logic is now handled in authorizeAndListEvents and related modules
 
 // Chat routing utilities
 class ChatRouter {
@@ -244,59 +260,135 @@ class ChatRouter {
 // Initialize router
 const chatRouter = new ChatRouter();
 
-// OAuth endpoints
-app.get('/api/auth-url', (req, res) => {
-  const authUrl = oAuth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: SCOPES,
-    prompt: 'consent',
-    include_granted_scopes: true
-  });
-  res.json({ url: authUrl });
-});
-
-// Handle both OAuth callback paths
-app.get('/oauth2callback', handleOAuthCallback);
-app.get('/api/oauth2callback', handleOAuthCallback);
-
-// OAuth callback handler function
-async function handleOAuthCallback(req: Request, res: Response) {
-  console.log('🔄 OAuth callback received:', { query: req.query });
-  const codeParam = req.query.code;
-
-  if (!codeParam || typeof codeParam !== 'string') {
-    console.log('❌ OAuth callback error: No code provided');
-    res.status(400).json({ error: 'No code provided' });
-    return;
-  }
-
+// Set up calendar polling instead of webhooks for local development
+async function subscribeToCalendarChanges(accessToken: string) {
   try {
-    console.log('📡 Getting tokens from Google...');
-    const { tokens } = await oAuth2Client.getToken(codeParam);
-    console.log('✅ Tokens received successfully');
-    oAuth2Client.setCredentials(tokens);
+    console.log('ℹ️ Setting up calendar polling for local development...');
+    // Start a polling interval (e.g., every 5 minutes)
+    setInterval(async () => {
+      try {
+        console.log('🔄 Polling calendar for changes...');
+        await main(undefined, { session: { accessToken } });
+      } catch (error) {
+        console.error('❌ Error polling calendar:', error);
+      }
+    }, 5 * 60 * 1000); // 5 minutes
 
-    fs.mkdirSync(path.dirname(TOKEN_PATH), { recursive: true });
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens));
-    console.log('✅ Token stored to', TOKEN_PATH);
-
-    // Start the pre-call preparation process
-    runScheduledPipeline().catch(error => {
-      console.error('Failed to start pipeline:', error);
-    });
-    
-    // Redirect back to the frontend with success status
-    res.redirect('http://localhost:5173/oauth?auth=success');
-  } catch (err) {
-    console.error('❌ Error retrieving access token', err);
-    res.status(500).json({ 
-      error: 'Failed to retrieve access token',
-      details: err instanceof Error ? err.message : 'Unknown error'
-    });
+    return { id: 'polling-mode', message: 'Calendar polling activated' };
+  } catch (error) {
+    console.error('❌ Error creating calendar subscription:', error);
+    throw error;
   }
 }
 
-async function main(initialState?: GraphState): Promise<GraphState> {
+// Type definitions for session data
+declare module 'express-session' {
+  interface SessionData {
+    accessToken: string;
+    refreshToken: string;
+  }
+}
+
+// Webhook endpoint for calendar notifications
+app.post('/api/webhook/calendar', async (req, res) => {
+  try {
+    console.log('📅 Received calendar webhook:', req.body);
+    const validationToken = req.query.validationToken;
+    
+    // Handle subscription validation
+    if (validationToken) {
+      console.log('✅ Validating webhook subscription');
+      res.set('Content-Type', 'text/plain');
+      return res.send(validationToken);
+    }
+
+    // Process the notification
+    const notifications = req.body.value;
+    for (const notification of notifications) {
+      console.log(`📝 Processing calendar change: ${notification.changeType}`);
+      // Run the pipeline for the updated calendar
+      await main(undefined, { session: { accessToken: req.session?.accessToken } });
+    }
+
+    res.status(202).send(); // Accepted
+  } catch (error) {
+    console.error('❌ Error processing webhook:', error);
+    res.status(500).json({ error: 'Failed to process webhook' });
+  }
+});
+
+// Microsoft Graph OAuth callback endpoint
+app.get('/auth/callback', async (req, res) => {
+  console.log('🔐 OAuth callback hit:', {
+    code: req.query.code ? 'present' : 'missing',
+    query: req.query
+  });
+  
+  try {
+    const code = req.query.code as string;
+    if (!code) {
+      throw new Error('No authorization code received');
+    }
+
+    const CLIENT_ID = process.env.MS_CLIENT_ID;
+    const CLIENT_SECRET = process.env.MS_CLIENT_SECRET;
+    const REDIRECT_URI = process.env.MS_REDIRECT_URI;
+    const TENANT_ID = process.env.MS_TENANT_ID;
+
+    if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI || !TENANT_ID) {
+      throw new Error('Missing required environment variables for OAuth');
+    }
+
+    // Exchange code for access token
+    const tokenEndpoint = `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`;
+    const params = new URLSearchParams({
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      code: code,
+      redirect_uri: REDIRECT_URI,
+      grant_type: 'authorization_code'
+    });
+
+    const response = await fetch(tokenEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: params
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Token exchange failed: ${error}`);
+    }
+
+    const data = await response.json();
+    
+    // Store the tokens in the session
+    if (req.session) {
+      req.session.accessToken = data.access_token;
+      req.session.refreshToken = data.refresh_token;
+      
+      // Subscribe to calendar changes
+      try {
+        console.log('📡 Setting up calendar webhook subscription...');
+        await subscribeToCalendarChanges(data.access_token);
+      } catch (error) {
+        console.error('⚠️ Failed to subscribe to calendar changes:', error);
+        // Continue even if subscription fails
+      }
+    }
+
+    // Redirect back to frontend with success flag
+    res.redirect(`${process.env.FRONTEND_URL}/oauth?auth=success`);
+  } catch (error) {
+    console.error('OAuth callback error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    res.redirect(`${process.env.FRONTEND_URL}/oauth?auth=error&message=${encodeURIComponent(errorMessage)}`);
+  }
+});
+
+async function main(initialState?: GraphState, req?: any): Promise<GraphState> {
   console.log('\n[Start] Starting Cprime AI Pre-Call Pipeline...');
   console.log('=' .repeat(60));
 
@@ -308,7 +400,16 @@ async function main(initialState?: GraphState): Promise<GraphState> {
   } else {
     console.log('🕐 Scanning for client meetings in the next 3 hours...\n');
     // Step 1: Get filtered calendar events (only next 3 hours, client meetings)
-    state = await authorizeAndListEvents();
+    // Use the access token from session if available
+    const accessToken = req?.session?.accessToken || process.env.MS_GRAPH_ACCESS_TOKEN || '';
+    console.log('🔑 Access Token Status:', {
+      hasToken: !!accessToken,
+      fromSession: !!req?.session?.accessToken,
+      fromEnv: !!process.env.MS_GRAPH_ACCESS_TOKEN
+    });
+    const mockReq = { session: { accessToken } };
+    const { listUpcomingEvents } = await import('./calendar/listEvents.js');
+    state = await authorizeAndListEvents(mockReq, listUpcomingEvents);
   }
   
   // DEBUG: Check what we got from authorize
@@ -373,7 +474,7 @@ async function main(initialState?: GraphState): Promise<GraphState> {
 
       // Step 3a: Search for previous meetings for this specific event
       console.log(`   🔍 Searching previous meetings for "${currentEvent.summary}"...`);
-      const results = await searchPreviousMeetings(currentEvent.summary, currentEvent.startTime);
+  const results = await searchPreviousMeetings(currentEvent.summary, currentEvent.startTime);
       
       const convertedMeetings: RetrievedMeeting[] = results.map((doc: { metadata: any; pageContent: any; }) => {
         const { metadata, pageContent } = doc;
@@ -557,9 +658,7 @@ async function main(initialState?: GraphState): Promise<GraphState> {
   console.log(`   - Company Research: ${hasTavily ? 'Tavily (Enabled)' : 'Disabled'}`);
   console.log(`   - Meeting Summaries: ${hasGemini ? 'Gemini (Enabled)' : 'Disabled'}`);
 
-  if (!hasHunter && hasOpenAI) {
-    console.log(`\n💡 TIP: Add HUNTER_API_KEY to .env for enhanced attendee research with verified professional data!`);
-  }
+  
 
   console.log('\n✅ Pre-call preparation pipeline completed successfully!');
   return state;
@@ -622,10 +721,28 @@ export async function runScheduledPipeline(): Promise<void> {
 // API endpoint to start the pipeline manually
 app.post('/api/start-pipeline', async (req, res) => {
   try {
-    await main();
-    res.json({ success: true, message: 'Pipeline completed successfully' });
+    // Check if we have a valid session with access token
+    if (!req.session?.accessToken) {
+      throw new Error('No valid session found. Please authenticate first.');
+    }
+
+    // Update pipeline status
+    updatePipelineStatus('started');
+
+    // Start the pipeline with the current session
+    const state = await main(undefined, req);
+
+    // Update pipeline status on completion
+    updatePipelineStatus('completed');
+
+    res.json({
+      success: true,
+      message: 'Pipeline started successfully',
+      events: state.calendarEvents?.length || 0
+    });
   } catch (error) {
     console.error('❌ Error in pipeline:', error);
+    updatePipelineStatus('error', undefined, error instanceof Error ? error.message : 'Unknown error');
     res.status(500).json({ 
       success: false, 
       error: 'Pipeline failed', 
@@ -648,8 +765,8 @@ app.get('/api/config-status', (req, res) => {
   
   res.json({
     attendeeResearch: {
-      type: hasHunter ? 'hunter' : hasOpenAI ? 'ai_only' : 'disabled',
-      status: hasHunter ? 'Hunter.io + AI (Enhanced)' : hasOpenAI ? 'AI Only (Basic)' : 'Disabled'
+      type: hasOpenAI ? 'ai_only' : 'disabled',
+      status: hasOpenAI ? 'AI Only' : 'Disabled'
     },
     companyResearch: {
       type: hasTavily ? 'tavily' : 'disabled',
@@ -660,7 +777,6 @@ app.get('/api/config-status', (req, res) => {
       status: hasGemini ? 'Gemini (Enabled)' : 'Disabled'
     },
     recommendations: {
-      hunter: hasHunter ? null : 'Add HUNTER_API_KEY for enhanced attendee research',
       tavily: hasTavily ? null : 'Add TAVILY_API_KEY for company research',
       gemini: hasGemini ? null : 'Add GEMINI_API_KEY for AI summaries'
     }
@@ -672,7 +788,8 @@ async function handleMeetingRequest(
   message: string, 
   context: string | undefined, 
   sessionId: string, 
-  res: Response
+  res: Response,
+  req: any
 ): Promise<Response> {
   console.log('Processing meeting preparation request...');
   
@@ -697,7 +814,7 @@ async function handleMeetingRequest(
       clearConversationState(sessionId);
       
       // Run the research pipeline and wait for results
-      const researchedState = await runFullResearchPipeline(chatResult.graphState);
+      const researchedState = await runFullResearchPipeline(chatResult.graphState, req);
 
       // Return the comprehensive results to the user
       return res.json({
@@ -736,7 +853,7 @@ async function handleMeetingRequest(
 }
 
 // Chat-specific research pipeline function
-async function runFullResearchPipeline(initialState: GraphState): Promise<GraphState> {
+async function runFullResearchPipeline(initialState: GraphState, req?: any): Promise<GraphState> {
   console.log('\nStarting full research pipeline for chat-initiated meeting...');
   console.log('='.repeat(60));
   
@@ -787,17 +904,10 @@ async function runFullResearchPipeline(initialState: GraphState): Promise<GraphS
       console.error('External company research failed:', error);
     }
 
-    // Step 3: Enhanced attendee research (Hunter.io + AI)
-    console.log('Conducting enhanced attendee research...');
-    try {
-      const hunterApiKey = process.env.HUNTER_API_KEY;
-      let researchState;
-      
-  // Hunter.io research is not available, fallback to LLM research
-  console.log('Using AI-only research (Hunter.io not configured)...');
-  researchState = await conductLLMResearch(initialState);
-      
-      // Merge research results
+      // Step 3: AI attendee research
+      console.log('Conducting AI attendee research...');
+      try {
+        const researchState = await conductLLMResearch(initialState);      // Merge research results
       initialState.externalResearch = {
         searchQuery: researchState.externalResearch?.searchQuery || initialState.externalResearch?.searchQuery || '',
         companyNews: researchState.externalResearch?.companyNews || initialState.externalResearch?.companyNews || '',
@@ -954,7 +1064,7 @@ app.post('/api/chat', async (req, res) => {
     // Handle based on route
     switch (route) {
       case 'meeting_collection':
-        return await handleMeetingRequest(message, context, sessionId, res);
+        return await handleMeetingRequest(message, context, sessionId, res, req);
       
       case 'summary_search':
         return await handleSummarySearch(message, res);
@@ -1004,37 +1114,7 @@ app.delete('/api/session/:sessionId', (req, res) => {
 });
 
 
-// NEW: Test Hunter.io endpoint for debugging
-app.post('/api/test-hunter', async (req, res) => {
-  const { email } = req.body;
-  
-  if (!email) {
-    return res.status(400).json({
-      success: false,
-      error: 'Email is required'
-    });
-  }
 
-  try {
-    console.log(`Testing Hunter.io research for: ${email}`);
-    const { runStandaloneLLMResearch } = await import('./agents/clientSearchAgent.js');
-    const result = await runStandaloneLLMResearch(email);
-    
-    return res.json({
-      success: true,
-      result,
-      hasVerifiedData: result.verified,
-      dataQuality: result.sourceCount ? 'High' : 'Limited'
-    });
-  } catch (error) {
-    console.error('Hunter.io test failed:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'Hunter.io test failed',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-});
 
 // NEW: Pipeline status tracking
 let pipelineStatus = {
@@ -1080,22 +1160,20 @@ app.listen(parseInt(process.env.PORT || '3001'), () => {
   console.log(`📋 Available endpoints:`);
   console.log(`   GET  /api/health - Health check`);
   console.log(`   GET  /api/config-status - Check API configuration`);
-  console.log(`   GET  /api/auth-url - Get Google OAuth URL`);
-  console.log(`   GET  /api/oauth2callback - OAuth callback`);
+  // console.log(`   GET  /api/auth-url - Get Google OAuth URL`);
+  // console.log(`   GET  /api/oauth2callback - OAuth callback`);
   console.log(`   POST /api/start-pipeline - Start pipeline manually`);
   console.log(`   POST /api/chat - Optimized chat-based meeting preparation`);
-  console.log(`   POST /api/test-hunter - Test Hunter.io integration`);
+
   console.log(`   GET  /api/debug/session/:sessionId - Debug session state`);
   console.log(`   DELETE /api/session/:sessionId - Clear session`);
   
   // Show configuration status on startup
   console.log(`\n📊 API Configuration Status:`);
-  const hasHunter = process.env.HUNTER_API_KEY && !process.env.HUNTER_API_KEY.startsWith("your_hunter_api_key");
   const hasOpenAI = process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.startsWith("your_api_key");
   const hasTavily = process.env.TAVILY_API_KEY && !process.env.TAVILY_API_KEY.startsWith("your_tavily_api_key");
   const hasGemini = process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith("your_gemini_api_key");
   
-  console.log(`   Hunter.io: ${hasHunter ? '[OK] Configured' : '[X] Not configured'}`);
   console.log(`   OpenAI: ${hasOpenAI ? '[OK] Configured' : '[X] Not configured'}`);
   console.log(`   Tavily: ${hasTavily ? '[OK] Configured' : '[X] Not configured'}`);
   console.log(`   Gemini: ${hasGemini ? '[OK] Configured' : '[X] Not configured'}`);

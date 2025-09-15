@@ -1,8 +1,7 @@
-import React from 'react';
 import { LandingPage } from './components/dashboard/LandingPage';
 import { OAuthFlow } from './components/auth/OAuthFlow';
 import { ChatInterface } from './components/chat/ChatInterface';
-import { MeetingDashboard } from './components/dashboard/MeetingDashboard';
+import { DashboardPage } from './components/dashboard/DashboardPage';
 import { useAppContext } from './contexts/AppContext';
 
 export function MainApp() {
@@ -15,7 +14,7 @@ export function MainApp() {
       case 'chat':
         return <ChatInterface />;
       case 'dashboard':
-        return <MeetingDashboard />;
+        return <DashboardPage />;
       default:
         return <LandingPage />;
     }

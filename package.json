@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@types/axios": "^0.9.36",
+    "@types/express-session": "^1.18.2",
+    "axios": "^1.12.2",
+    "express-session": "^1.18.2",
+    "open": "^10.2.0"
+  }
+}

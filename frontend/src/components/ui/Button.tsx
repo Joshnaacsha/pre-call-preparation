@@ -1,6 +1,5 @@
 import React from 'react';
-import { motion } from 'framer-motion';
-import { cn } from '../../utils';
+import { cn } from '../../utils/index';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -34,9 +33,7 @@ export function Button({
   };
 
   return (
-    <motion.button
-      whileHover={{ scale: 1.02 }}
-      whileTap={{ scale: 0.98 }}
+    <button
       className={cn(baseClasses, variants[variant], sizes[size], className)}
       disabled={disabled || isLoading}
       {...props}
@@ -48,6 +45,6 @@ export function Button({
         </svg>
       )}
       {children}
-    </motion.button>
+    </button>
   );
 }
