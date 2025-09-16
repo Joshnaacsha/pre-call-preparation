@@ -7,6 +7,10 @@ import { useAppContext } from '../../contexts/AppContext';
 
 const MSGraphSignInButton: React.FC = () => {
     const handleSignIn = () => {
+        // Clear any existing auth state before starting new flow
+        localStorage.removeItem('authState');
+        localStorage.removeItem('appState');
+        
         const CLIENT_ID = import.meta.env.VITE_MS_CLIENT_ID;
         const REDIRECT_URI = import.meta.env.VITE_MS_REDIRECT_URI;
         const TENANT_ID = import.meta.env.VITE_MS_TENANT_ID;
@@ -74,17 +78,45 @@ export function OAuthFlow() {
     }
   };
 
+  // Initialize state from localStorage on component mount
+  React.useEffect(() => {
+    const savedAuthState = localStorage.getItem('authState');
+    if (savedAuthState) {
+      const { isAuthenticated, pipelineStatus: savedPipelineStatus } = JSON.parse(savedAuthState);
+      setAuthSuccess(isAuthenticated);
+      setPipelineStatus(savedPipelineStatus || 'completed');
+      dispatch({ type: 'SET_AUTH_STATUS', payload: isAuthenticated });
+    }
+  }, []);
+
+  // Save state to localStorage whenever it changes
+  React.useEffect(() => {
+    if (authSuccess) {
+      localStorage.setItem('authState', JSON.stringify({
+        isAuthenticated: true,
+        pipelineStatus: pipelineStatus
+      }));
+    }
+  }, [authSuccess, pipelineStatus]);
+
   React.useEffect(() => {
     // Check for auth success or error in URL parameters
     const params = new URLSearchParams(window.location.search);
     if (params.get('auth') === 'success') {
       setAuthSuccess(true);
-      // Set auth status in global state
       dispatch({ type: 'SET_AUTH_STATUS', payload: true });
+      
+      // Always set pipeline as completed for direct auth flow
+      setPipelineStatus('completed');
+      
+      // Store in localStorage
+      localStorage.setItem('authState', JSON.stringify({
+        isAuthenticated: true,
+        pipelineStatus: 'completed'
+      }));
+      
       // Clean up the URL
       window.history.replaceState({}, document.title, '/oauth');
-      // Start the pipeline
-      startPipeline();
     } else if (params.get('auth') === 'error') {
       const errorMessage = params.get('message');
       console.error('Authentication error:', errorMessage);
@@ -178,17 +210,15 @@ export function OAuthFlow() {
                   </div>
                 ) : null}
                 
-                <Button
-                  size="lg"
-                  onClick={() => dispatch({ type: 'SET_MODE', payload: 'dashboard' })}
-                  className="w-full bg-green-600 hover:bg-green-700"
-                  disabled={pipelineStatus === 'starting' || pipelineStatus === 'running'}
-                >
-                  Continue to Dashboard
-                </Button>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  You can always access your briefings from the dashboard
-                </p>
+                <div className="text-center mt-8">
+                  <p className="text-lg text-gray-700 dark:text-gray-300 mb-4">
+                    Thank you for subscribing to the Pre-Call Preparation Application.
+                    You'll receive email notifications 3 hours before your client meetings.
+                  </p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    You can now close this window.
+                  </p>
+                </div>
               </div>
             </Card>
           </motion.div>

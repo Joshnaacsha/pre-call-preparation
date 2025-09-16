@@ -1,30 +1,26 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Calendar, MessageCircle, Zap, Clock, FileText, Mail } from 'lucide-react';
+import { Calendar, MessageCircle, Zap } from 'lucide-react';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { useAppContext } from '../../contexts/AppContext';
 
 const features = [
   {
-    icon: Calendar,
-    title: 'Smart Calendar Sync',
-    description: 'Automatically detects upcoming meetings and prepares research materials.'
+    title: 'Automatic Detection',
+    description: 'We scan your calendar for client meetings and prepare briefings automatically.'
   },
   {
-    icon: MessageCircle,
-    title: 'AI Chat Assistant',
-    description: 'Conversational preparation for any meeting with intelligent follow-up questions.'
+    title: 'Email Notifications',
+    description: 'Get briefing materials 3 hours before every client meeting.'
   },
   {
-    icon: FileText,
-    title: 'Professional Summaries',
-    description: 'Generate comprehensive PDF briefs with company research and attendee profiles.'
+    title: 'AI Research',
+    description: 'Our AI analyzes company background, past interactions, and recent updates.'
   },
   {
-    icon: Mail,
-    title: 'Email Integration',
-    description: 'Automatically sends preparation materials directly to your inbox.'
+    title: 'Privacy First',
+    description: 'We only access meeting details and never store sensitive information.'
   }
 ];
 
@@ -52,15 +48,14 @@ export function LandingPage() {
           </div>
           
           <h1 className="text-5xl md:text-7xl font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent mb-6">
-            AI Meeting Prep
+            Pre-Call Preparation
           </h1>
           
           <p className="text-xl md:text-2xl text-gray-600 dark:text-gray-300 mb-12 max-w-3xl mx-auto leading-relaxed">
-            Never walk into an unprepared meeting again. Our AI assistant researches your meetings, 
-            prepares comprehensive briefs, and delivers them directly to your inbox.
+            Get AI-powered briefings delivered to your inbox before every client meeting.
           </p>
 
-          {/* Action Cards */}
+          {/* Action Card */}
           <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto mb-16">
             <Card onClick={() => dispatch({ type: 'SET_MODE', payload: 'oauth' })}>
               <div className="p-8 text-center">
@@ -68,13 +63,13 @@ export function LandingPage() {
                   <Calendar className="h-8 w-8 text-white" />
                 </div>
                 <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-                  🔗 Connect Calendar
+                  🔗 Subscribe Now
                 </h3>
                 <p className="text-gray-600 dark:text-gray-300 mb-6">
-                  Automatic meeting detection and preparation with OAuth integration
+                  Connect your calendar to receive automatic meeting briefings via email
                 </p>
                 <Button size="lg" className="w-full">
-                  Get Started
+                  Connect Calendar
                 </Button>
               </div>
             </Card>
@@ -113,7 +108,6 @@ export function LandingPage() {
               transition={{ duration: 0.5, delay: 0.1 * index }}
             >
               <Card className="p-6 text-center h-full">
-                <feature.icon className="h-12 w-12 mx-auto mb-4 text-blue-600 dark:text-blue-400" />
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
                   {feature.title}
                 </h3>

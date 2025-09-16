@@ -40,14 +40,13 @@ export async function processMultipleClientMeetings(state: GraphState): Promise<
     const event = state.calendarEvents[i];
     const eventId = clientEventIds[i];
     
-    console.log(`\n📋 Processing meeting ${i + 1}/${state.calendarEvents.length}: ${event.summary}`);
-    
     // Check if PDF already exists
     if (hasPdfBeenGenerated(event, eventId)) {
       console.log(`⏭️  Skipping - PDF already exists for: ${event.summary}`);
       continue;
     }
     
+    console.log(`\n📋 Processing meeting ${i + 1}/${state.calendarEvents.length}: ${event.summary}`);
     try {
       // Create individual state for this meeting
       const meetingState: GraphState = {
@@ -60,7 +59,6 @@ export async function processMultipleClientMeetings(state: GraphState): Promise<
       results.push(result);
       
       console.log(`✅ Successfully processed: ${event.summary}`);
-      
     } catch (error) {
       console.error(`❌ Error processing meeting "${event.summary}":`, error);
       // Continue with other meetings even if one fails
@@ -414,50 +412,17 @@ async function sendEmailWithPdf(
   const pdfContent = fs.readFileSync(pdfPath);
   const pdfBase64 = pdfContent.toString('base64');
 
-  // Get access token using refresh token if needed
-  let accessToken = process.env.MS_GRAPH_ACCESS_TOKEN;
-  const refreshToken = process.env.MS_GRAPH_REFRESH_TOKEN;
-  const clientId = process.env.MS_CLIENT_ID;
-  const clientSecret = process.env.MS_CLIENT_SECRET;
-  const tenantId = process.env.MS_TENANT_ID;
-
-  if (!refreshToken || !clientId || !clientSecret || !tenantId) {
-    throw new Error('Missing required Microsoft Graph credentials. Run auth/getGraphToken.ts to set up authentication.');
+  // Always get a fresh access token using TokenService and userEmail
+  // Find userEmail from event or environment
+  let userEmail = event?.organizer || process.env.DEFAULT_USER_EMAIL;
+  if (!userEmail) {
+    throw new Error('No user email found for token refresh.');
   }
-
-  // If no access token or it's expired, get a new one using refresh token
-  if (!accessToken) {
-    const tokenResponse = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token',
-        scope: 'offline_access Mail.Send Mail.ReadWrite'
-      })
-    });
-
-    if (!tokenResponse.ok) {
-      const error = await tokenResponse.json();
-      throw new Error(`Failed to refresh access token: ${JSON.stringify(error)}`);
-    }
-
-    interface TokenResponse {
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-    }
-
-    const tokens = await tokenResponse.json() as TokenResponse;
-    accessToken = tokens.access_token;
-
-    // You might want to save the new tokens here
-    console.log('⚠️ Access token refreshed. You may want to update MS_GRAPH_ACCESS_TOKEN in your .env file');
-  }
+  // Import TokenService dynamically to avoid circular deps
+  const TokenService = (await import('../services/token.js')).default;
+  const tokenService = await TokenService;
+  const tokens = await tokenService.refreshTokenIfNeeded(userEmail);
+  const accessToken = tokens.accessToken;
 
   // Calculate email timing and urgency information
   const now = new Date();

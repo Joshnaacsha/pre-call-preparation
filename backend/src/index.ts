@@ -21,8 +21,7 @@ import { hasPdfBeenGenerated, markPdfAsGenerated } from './calendar/listEvents.j
 import type { GraphState, RetrievedMeeting } from './graph/graphState.js';
 import fs from 'fs';
 import path from 'path';
-// import { google } from 'googleapis';
-// import { listUpcomingEvents } from './calendar/listEvents.js';
+import CalendarWorker from './services/calendar-worker.js';
 
 const app = express();
 
@@ -260,15 +259,29 @@ class ChatRouter {
 // Initialize router
 const chatRouter = new ChatRouter();
 
+import TokenService from './services/token.js';
+import DatabaseService from './services/database.js';
+
+// Type definitions for session data
+declare module 'express-session' {
+  interface SessionData {
+    userEmail: string;
+  }
+}
+
 // Set up calendar polling instead of webhooks for local development
-async function subscribeToCalendarChanges(accessToken: string) {
+async function subscribeToCalendarChanges(email: string) {
   try {
     console.log('ℹ️ Setting up calendar polling for local development...');
     // Start a polling interval (e.g., every 5 minutes)
     setInterval(async () => {
       try {
         console.log('🔄 Polling calendar for changes...');
-        await main(undefined, { session: { accessToken } });
+        const db = await DatabaseService;
+        const userSub = await db.getUserSubscription(email);
+        if (userSub && userSub.token_expiry > new Date()) {
+          await main(undefined, { session: { userEmail: email } });
+        }
       } catch (error) {
         console.error('❌ Error polling calendar:', error);
       }
@@ -278,14 +291,6 @@ async function subscribeToCalendarChanges(accessToken: string) {
   } catch (error) {
     console.error('❌ Error creating calendar subscription:', error);
     throw error;
-  }
-}
-
-// Type definitions for session data
-declare module 'express-session' {
-  interface SessionData {
-    accessToken: string;
-    refreshToken: string;
   }
 }
 
@@ -307,7 +312,13 @@ app.post('/api/webhook/calendar', async (req, res) => {
     for (const notification of notifications) {
       console.log(`📝 Processing calendar change: ${notification.changeType}`);
       // Run the pipeline for the updated calendar
-      await main(undefined, { session: { accessToken: req.session?.accessToken } });
+      if (req.session?.userEmail) {
+        const db = await DatabaseService;
+        const userSub = await db.getUserSubscription(req.session.userEmail);
+        if (userSub && userSub.token_expiry > new Date()) {
+          await main(undefined, { session: { userEmail: req.session.userEmail } });
+        }
+      }
     }
 
     res.status(202).send(); // Accepted
@@ -330,57 +341,85 @@ app.get('/auth/callback', async (req, res) => {
       throw new Error('No authorization code received');
     }
 
-    const CLIENT_ID = process.env.MS_CLIENT_ID;
-    const CLIENT_SECRET = process.env.MS_CLIENT_SECRET;
-    const REDIRECT_URI = process.env.MS_REDIRECT_URI;
-    const TENANT_ID = process.env.MS_TENANT_ID;
-
-    if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI || !TENANT_ID) {
-      throw new Error('Missing required environment variables for OAuth');
-    }
-
-    // Exchange code for access token
-    const tokenEndpoint = `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`;
-    const params = new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      code: code,
-      redirect_uri: REDIRECT_URI,
-      grant_type: 'authorization_code'
-    });
-
-    const response = await fetch(tokenEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: params
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Token exchange failed: ${error}`);
-    }
-
-    const data = await response.json();
+    const tokenService = await TokenService;
+    const tokens = await tokenService.exchangeCodeForTokens(code);
     
-    // Store the tokens in the session
-    if (req.session) {
-      req.session.accessToken = data.access_token;
-      req.session.refreshToken = data.refresh_token;
+    // Get user info to store with subscription
+    const userInfo = await tokenService.getUserInfo(tokens.access_token);
+    
+    // Calculate token expiry
+    const expiryDate = new Date();
+    expiryDate.setSeconds(expiryDate.getSeconds() + tokens.expires_in);
+    
+    // Store subscription in database
+    const db = await DatabaseService;
+    await db.createUserSubscription(
+      userInfo.email,
+      tokens.access_token,
+      tokens.refresh_token,
+      expiryDate
+    );
+    
+    // First, ensure we have a session and store the email
+    if (!req.session) {
+      throw new Error('No session available');
+    }
+    
+    req.session.userEmail = userInfo.email;
+    
+    // Create a promise to ensure session is fully saved
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    // Double check the session was saved
+    console.log('Session state after save:', {
+      hasSession: !!req.session,
+      userEmail: req.session.userEmail,
+      sessionID: req.sessionID
+    });
+
+    // Now that session is saved, set up calendar subscription
+    try {
+      console.log('📡 Setting up calendar webhook subscription...');
+      await subscribeToCalendarChanges(userInfo.email);
       
-      // Subscribe to calendar changes
-      try {
-        console.log('📡 Setting up calendar webhook subscription...');
-        await subscribeToCalendarChanges(data.access_token);
-      } catch (error) {
-        console.error('⚠️ Failed to subscribe to calendar changes:', error);
-        // Continue even if subscription fails
-      }
+      // Start the pipeline with explicit session data
+      console.log('🚀 Starting initial pipeline scan...');
+      const mockReq = {
+        session: {
+          userEmail: userInfo.email,
+          save: req.session.save.bind(req.session)
+        }
+      };
+      
+      // Wait for main pipeline to complete
+      const state = await main(undefined, mockReq);
+      console.log('Pipeline completed with state:', {
+        hasEvents: !!state.calendarEvents,
+        eventCount: state.calendarEvents?.length || 0
+      });
+    } catch (error) {
+      console.error('⚠️ Error in setup:', error);
+      // Log detailed error info
+      console.error('Detailed error:', {
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : 'No stack trace',
+        sessionState: {
+          hasSession: !!req.session,
+          userEmail: req.session?.userEmail
+        }
+      });
     }
 
-    // Redirect back to frontend with success flag
-    res.redirect(`${process.env.FRONTEND_URL}/oauth?auth=success`);
+    // Redirect back to frontend success page
+    const successUrl = new URL('/oauth', process.env.FRONTEND_URL);
+    successUrl.searchParams.set('auth', 'success');
+    successUrl.searchParams.set('direct', 'true');
+    res.redirect(successUrl.toString());
   } catch (error) {
     console.error('OAuth callback error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
@@ -400,16 +439,16 @@ async function main(initialState?: GraphState, req?: any): Promise<GraphState> {
   } else {
     console.log('🕐 Scanning for client meetings in the next 3 hours...\n');
     // Step 1: Get filtered calendar events (only next 3 hours, client meetings)
-    // Use the access token from session if available
-    const accessToken = req?.session?.accessToken || process.env.MS_GRAPH_ACCESS_TOKEN || '';
-    console.log('🔑 Access Token Status:', {
-      hasToken: !!accessToken,
-      fromSession: !!req?.session?.accessToken,
-      fromEnv: !!process.env.MS_GRAPH_ACCESS_TOKEN
+    // Use the user email from session to refresh token
+    const userEmail = req?.session?.userEmail;
+    console.log('🔑 Session Status:', {
+      hasSession: !!req?.session,
+      hasUserEmail: !!userEmail,
+      userEmail: userEmail || 'not found',
+      sessionID: req?.sessionID
     });
-    const mockReq = { session: { accessToken } };
     const { listUpcomingEvents } = await import('./calendar/listEvents.js');
-    state = await authorizeAndListEvents(mockReq, listUpcomingEvents);
+    state = await authorizeAndListEvents(req, listUpcomingEvents);
   }
   
   // DEBUG: Check what we got from authorize
@@ -721,16 +760,23 @@ export async function runScheduledPipeline(): Promise<void> {
 // API endpoint to start the pipeline manually
 app.post('/api/start-pipeline', async (req, res) => {
   try {
-    // Check if we have a valid session with access token
-    if (!req.session?.accessToken) {
+    // Check if we have a valid session with user email
+    if (!req.session?.userEmail) {
       throw new Error('No valid session found. Please authenticate first.');
     }
 
     // Update pipeline status
     updatePipelineStatus('started');
 
-    // Start the pipeline with the current session
-    const state = await main(undefined, req);
+    // Get user subscription with valid token
+    const db = await DatabaseService;
+    const userSub = await db.getUserSubscription(req.session.userEmail);
+    if (!userSub || userSub.token_expiry <= new Date()) {
+      throw new Error('Invalid or expired subscription');
+    }
+
+    // Start the pipeline with the user's token
+    const state = await main(undefined, { session: { userEmail: req.session.userEmail } });
 
     // Update pipeline status on completion
     updatePipelineStatus('completed');

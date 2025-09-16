@@ -158,19 +158,15 @@ export async function listUpcomingEvents(accessToken: string): Promise<GraphStat
   console.log(`📅 Found ${allStructuredEvents.length} total events in next 3 hours`);
 
   // Apply client/external filters
+  // Only include events in time window AND with at least one external attendee
   const clientEvents = allStructuredEvents.filter(event => {
     const isInTimeWindow = isEventInTimeWindow(event.startTime, now, threeHoursLater);
-    const passesClientFilter = hasClientKeywords(event.summary);
     const passesAttendeeFilter = hasExternalAttendees(event.attendees);
-    
     console.log(`\n🔍 Filtering Event: "${event.summary}"`);
     console.log(`   Time: ${new Date(event.startTime).toLocaleString()}`);
     console.log(`   In time window: ${isInTimeWindow ? '✅' : '❌'}`);
-    console.log(`   Keywords matched: ${passesClientFilter ? '✅' : '❌'}`);
     console.log(`   Attendees check: ${passesAttendeeFilter ? '✅' : '❌'}`);
-
-    // Include events that are in time window AND (have client keywords OR external attendees)
-    const shouldInclude = isInTimeWindow && (passesClientFilter || passesAttendeeFilter);
+    const shouldInclude = isInTimeWindow && passesAttendeeFilter;
     console.log(`   Final decision: ${shouldInclude ? '✅ Including' : '❌ Excluding'}`);
     return shouldInclude;
   });

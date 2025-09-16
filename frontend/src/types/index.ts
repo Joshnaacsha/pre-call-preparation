@@ -26,7 +26,7 @@ export interface AppState {
   chatMessages: ChatMessage[];
   isAuthenticated: boolean;
   authUrl?: string;
-  currentMode: 'landing' | 'oauth' | 'chat' | 'dashboard';
+  currentMode: 'landing' | 'oauth' | 'chat';
 }
 
 export interface ApiResponse<T> {

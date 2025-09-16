@@ -21,6 +21,6 @@ export interface AppState {
   meetings: Meeting[];
   chatMessages: ChatMessage[];
   isAuthenticated: boolean;
-  currentMode: 'landing' | 'chat' | 'dashboard' | 'oauth';
+  currentMode: 'landing' | 'chat' | 'oauth';
   authUrl?: string;
 }

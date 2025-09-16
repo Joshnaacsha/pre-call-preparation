@@ -133,6 +133,10 @@ pre-call-preparation/
 └── summaries/           # Generated meeting summaries
 ```
 
+## Run for re authentication for sending mails in outlook
+npx ts-node .\dist\auth\getGraphToken.js
+
+
 ## Contributing
 
 1. Fork the repository

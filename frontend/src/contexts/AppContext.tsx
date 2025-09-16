@@ -9,12 +9,31 @@ type AppAction =
   | { type: 'SET_MODE'; payload: AppState['currentMode'] }
   | { type: 'UPDATE_MEETING'; payload: Meeting };
 
-const initialState: AppState = {
-  meetings: [],
-  chatMessages: [],
-  isAuthenticated: false,
-  currentMode: 'landing',
+// Load initial state from localStorage
+const loadInitialState = (): AppState => {
+  const savedState = localStorage.getItem('appState');
+  const defaultState: AppState = {
+    meetings: [],
+    chatMessages: [],
+    isAuthenticated: false,
+    currentMode: 'landing',
+  };
+
+  if (savedState) {
+    try {
+      const parsed = JSON.parse(savedState);
+      return {
+        ...defaultState,
+        ...parsed,
+      };
+    } catch (e) {
+      console.error('Failed to parse saved state:', e);
+    }
+  }
+  return defaultState;
 };
+
+const initialState = loadInitialState();
 
 const AppContext = createContext<{
   state: AppState;
@@ -47,6 +66,14 @@ function appReducer(state: AppState, action: AppAction): AppState {
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
+
+  // Save state to localStorage whenever it changes
+  React.useEffect(() => {
+    localStorage.setItem('appState', JSON.stringify({
+      isAuthenticated: state.isAuthenticated,
+      currentMode: state.currentMode,
+    }));
+  }, [state.isAuthenticated, state.currentMode]);
 
   return (
     <AppContext.Provider value={{ state, dispatch }}>
