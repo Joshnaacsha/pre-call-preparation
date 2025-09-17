@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion } from 'framer-motion';
 import { Calendar, MessageCircle, Zap } from 'lucide-react';
 import { Card } from '../ui/Card';

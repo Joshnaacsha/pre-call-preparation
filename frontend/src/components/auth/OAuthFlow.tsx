@@ -6,10 +6,11 @@ import { Button } from '../ui/Button';
 import { useAppContext } from '../../contexts/AppContext';
 
 const MSGraphSignInButton: React.FC = () => {
+    const { state } = useAppContext();
     const handleSignIn = () => {
-        // Clear any existing auth state before starting new flow
-        localStorage.removeItem('authState');
-        localStorage.removeItem('appState');
+        // Store the current path and mode for redirect after auth
+        localStorage.setItem('redirectAfterAuth', window.location.pathname);
+        localStorage.setItem('redirectMode', state.currentMode);
         
         const CLIENT_ID = import.meta.env.VITE_MS_CLIENT_ID;
         const REDIRECT_URI = import.meta.env.VITE_MS_REDIRECT_URI;

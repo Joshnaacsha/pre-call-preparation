@@ -12,25 +12,48 @@ type AppAction =
 // Load initial state from localStorage
 const loadInitialState = (): AppState => {
   const savedState = localStorage.getItem('appState');
+  const savedAuth = localStorage.getItem('authState');
+  
   const defaultState: AppState = {
     meetings: [],
     chatMessages: [],
     isAuthenticated: false,
     currentMode: 'landing',
+    lastAuthStatus: null,
+    pipelineStatus: 'idle',
   };
 
-  if (savedState) {
+  // First check if we have valid authentication
+  let isAuthenticated = false;
+  if (savedAuth) {
     try {
-      const parsed = JSON.parse(savedState);
-      return {
-        ...defaultState,
-        ...parsed,
-      };
+      const parsedAuth = JSON.parse(savedAuth);
+      isAuthenticated = Boolean(parsedAuth.isAuthenticated);
     } catch (e) {
-      console.error('Failed to parse saved state:', e);
+      console.error('Failed to parse auth state:', e);
     }
   }
-  return defaultState;
+
+  // Then load the rest of the state
+  if (savedState) {
+    try {
+      const parsedState = JSON.parse(savedState);
+      return {
+        ...defaultState,
+        ...parsedState,
+        isAuthenticated, // Use the auth status we just verified
+        pipelineStatus: isAuthenticated ? 'completed' : 'idle',
+        lastAuthStatus: isAuthenticated ? new Date().toISOString() : null,
+      };
+    } catch (e) {
+      console.error('Failed to parse app state:', e);
+    }
+  }
+
+  return {
+    ...defaultState,
+    isAuthenticated, // Maintain auth status even if app state fails to load
+  };
 };
 
 const initialState = loadInitialState();
@@ -69,11 +92,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Save state to localStorage whenever it changes
   React.useEffect(() => {
+    // Save both auth and app state
     localStorage.setItem('appState', JSON.stringify({
       isAuthenticated: state.isAuthenticated,
       currentMode: state.currentMode,
     }));
-  }, [state.isAuthenticated, state.currentMode]);
+    
+    // Also update authState for consistency
+    if (state.isAuthenticated) {
+      localStorage.setItem('authState', JSON.stringify({
+        isAuthenticated: true,
+        pipelineStatus: state.pipelineStatus || 'completed'
+      }));
+    } else {
+      localStorage.removeItem('authState');
+    }
+  }, [state.isAuthenticated, state.currentMode, state.pipelineStatus]);
 
   return (
     <AppContext.Provider value={{ state, dispatch }}>

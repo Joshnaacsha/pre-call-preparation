@@ -23,4 +23,7 @@ export interface AppState {
   isAuthenticated: boolean;
   currentMode: 'landing' | 'chat' | 'oauth';
   authUrl?: string;
+  lastAuthStatus: string | null;
+  pipelineStatus: 'idle' | 'starting' | 'completed' | 'error';
+  redirectAfterAuth?: string;
 }

@@ -110,5 +110,37 @@
     "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-ai-sales-assistant---team-connect-2025-09-16-05-33-25-252Z.pdf",
     "meetingStartTime": "2025-09-16T06:30:00.0000000Z",
     "meetingSummary": "Ai Sales Assistant - Team connect"
+  },
+  "f67d7484cbc1": {
+    "eventId": "f67d7484cbc1",
+    "eventHash": "05b49a3a580b5c5f8af804dd26e16f2fc91b7b6c031565e9a7beafc20228aec3",
+    "generatedAt": "2025-09-16T09:03:10.662Z",
+    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting-2025-09-16-09-03-08-597Z.pdf",
+    "meetingStartTime": "2025-09-16T09:30:00.0000000Z",
+    "meetingSummary": "facebook client meeting"
+  },
+  "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAfXuW8AAA=": {
+    "eventId": "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAfXuW8AAA=",
+    "eventHash": "05b49a3a580b5c5f8af804dd26e16f2fc91b7b6c031565e9a7beafc20228aec3",
+    "generatedAt": "2025-09-16T09:03:12.537Z",
+    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting-2025-09-16-09-03-08-597Z.pdf",
+    "meetingStartTime": "2025-09-16T09:30:00.0000000Z",
+    "meetingSummary": "facebook client meeting"
+  },
+  "ddfe3a281439": {
+    "eventId": "ddfe3a281439",
+    "eventHash": "769f0e2125f6460d7a00611973872dafa1acbcecd7e95c941f17345a9849da90",
+    "generatedAt": "2025-09-16T14:45:19.228Z",
+    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting-2025-09-16-14-45-17-817Z.pdf",
+    "meetingStartTime": "2025-09-16T15:30:00.0000000Z",
+    "meetingSummary": "facebook client meeting"
+  },
+  "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAfXuW_AAA=": {
+    "eventId": "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAfXuW_AAA=",
+    "eventHash": "769f0e2125f6460d7a00611973872dafa1acbcecd7e95c941f17345a9849da90",
+    "generatedAt": "2025-09-16T14:45:20.105Z",
+    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting-2025-09-16-14-45-17-817Z.pdf",
+    "meetingStartTime": "2025-09-16T15:30:00.0000000Z",
+    "meetingSummary": "facebook client meeting"
   }
 }
