@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { searchDocuments } from '../embeddings/embedAndStore.js';
-import { performTavilySearch, processSearchResults, TavilySearchResult } from './tavilySearchAgent.js';
+import { performTavilySearch, processSearchResults, SearchResult } from './externalSearchAgent.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -163,7 +163,7 @@ export async function fallbackToWebSearch(query: string): Promise<RAGResponse> {
         "Should I search for recent updates?",
         "Would you like information about a different topic?"
       ],
-      sources: results.map((result: TavilySearchResult) => ({
+      sources: results.map((result: SearchResult) => ({
         summary: result.title,
         metadata: {
           url: result.url,
