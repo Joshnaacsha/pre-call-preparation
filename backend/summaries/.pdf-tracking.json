@@ -1,146 +1,34 @@
 {
-  "1392f418074c": {
-    "eventId": "1392f418074c",
-    "eventHash": "054054ce404b3adde92f334a3de4b37e83fc1ebb693cffdbd8cfb99e5129e88d",
-    "generatedAt": "2025-09-15T14:01:10.359Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-meet-for-new-opportunity---ford-2025-09-15-14-01-08-668Z.pdf",
-    "meetingStartTime": "2025-09-15T14:30:00.0000000Z",
-    "meetingSummary": "meet for new opportunity - ford"
+  "617bbc79c6f4": {
+    "eventId": "617bbc79c6f4",
+    "eventHash": "cb6e2c3cc8b63a7696f822e2b187601b0bd3e4b02a737a868aeffbfee3fadacc",
+    "generatedAt": "2025-09-18T06:20:41.040Z",
+    "pdfPath": "C:\\Users\\Thrisha Babu\\OneDrive\\Desktop\\thiru-projects\\ai-sales-assistant\\pre-call\\pre-call-preparation\\backend\\summaries\\briefing-nestle-meeting-2025-09-18-06-20-38-444Z.pdf",
+    "meetingStartTime": "2025-09-18T07:30:00.0000000Z",
+    "meetingSummary": "nestle meeting"
   },
-  "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAesNDmAAA=": {
-    "eventId": "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAesNDmAAA=",
-    "eventHash": "054054ce404b3adde92f334a3de4b37e83fc1ebb693cffdbd8cfb99e5129e88d",
-    "generatedAt": "2025-09-15T14:01:10.365Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-meet-for-new-opportunity---ford-2025-09-15-14-01-08-668Z.pdf",
-    "meetingStartTime": "2025-09-15T14:30:00.0000000Z",
-    "meetingSummary": "meet for new opportunity - ford"
+  "AAMkADI0OWJhNzJjLTZhNzEtNDA3MC1iMzQxLWQxMDgwNmQzYTlkNQBGAAAAAADnMJBXPF2_SoPDiITXEPJKBwDvsXFIyAuKQ5IS0lUxhFOBAAAAAAENAADvsXFIyAuKQ5IS0lUxhFOBAAAggyLgAAA=": {
+    "eventId": "AAMkADI0OWJhNzJjLTZhNzEtNDA3MC1iMzQxLWQxMDgwNmQzYTlkNQBGAAAAAADnMJBXPF2_SoPDiITXEPJKBwDvsXFIyAuKQ5IS0lUxhFOBAAAAAAENAADvsXFIyAuKQ5IS0lUxhFOBAAAggyLgAAA=",
+    "eventHash": "cb6e2c3cc8b63a7696f822e2b187601b0bd3e4b02a737a868aeffbfee3fadacc",
+    "generatedAt": "2025-09-18T06:20:41.721Z",
+    "pdfPath": "C:\\Users\\Thrisha Babu\\OneDrive\\Desktop\\thiru-projects\\ai-sales-assistant\\pre-call\\pre-call-preparation\\backend\\summaries\\briefing-nestle-meeting-2025-09-18-06-20-38-444Z.pdf",
+    "meetingStartTime": "2025-09-18T07:30:00.0000000Z",
+    "meetingSummary": "nestle meeting"
   },
-  "8b3c8fe73411": {
-    "eventId": "8b3c8fe73411",
-    "eventHash": "e98fa364faffc1cf76b0ea267d8c69f9650b112a0d5c88b98c14c91766036d93",
-    "generatedAt": "2025-09-15T14:08:37.552Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-client-meet-with-facebook-2025-09-15-14-08-36-218Z.pdf",
-    "meetingStartTime": "2025-09-15T14:30:00.0000000Z",
-    "meetingSummary": "client meet with facebook"
+  "fc11195b0db3": {
+    "eventId": "fc11195b0db3",
+    "eventHash": "0f4cf8b503e40332418120cddc5978e91eedb0379f12f262bffe8061e9a9672f",
+    "generatedAt": "2025-09-25T06:56:42.212Z",
+    "pdfPath": "C:\\Users\\Thrisha Babu\\OneDrive\\Desktop\\thiru-projects\\ai-sales-assistant\\pre-call\\pre-call-preparation\\backend\\summaries\\briefing-ford-meeting-2025-09-25-06-56-40-296Z.pdf",
+    "meetingStartTime": "2025-09-25T08:00:00.0000000Z",
+    "meetingSummary": "ford meeting"
   },
-  "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAesNDnAAA=": {
-    "eventId": "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAesNDnAAA=",
-    "eventHash": "e98fa364faffc1cf76b0ea267d8c69f9650b112a0d5c88b98c14c91766036d93",
-    "generatedAt": "2025-09-15T14:08:37.556Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-client-meet-with-facebook-2025-09-15-14-08-36-218Z.pdf",
-    "meetingStartTime": "2025-09-15T14:30:00.0000000Z",
-    "meetingSummary": "client meet with facebook"
-  },
-  "913433aadfa4": {
-    "eventId": "913433aadfa4",
-    "eventHash": "ef3d54e349b7ec2b7d6ce824322b4e8a3cdd692ad71d6730c7608279e9908be0",
-    "generatedAt": "2025-09-15T14:18:08.085Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-client-meet-with-facebook---opportunities-2025-09-15-14-18-06-626Z.pdf",
-    "meetingStartTime": "2025-09-15T16:30:00.0000000Z",
-    "meetingSummary": "client meet with facebook - opportunities"
-  },
-  "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAesNDoAAA=": {
-    "eventId": "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAesNDoAAA=",
-    "eventHash": "ef3d54e349b7ec2b7d6ce824322b4e8a3cdd692ad71d6730c7608279e9908be0",
-    "generatedAt": "2025-09-15T14:18:08.092Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-client-meet-with-facebook---opportunities-2025-09-15-14-18-06-626Z.pdf",
-    "meetingStartTime": "2025-09-15T16:30:00.0000000Z",
-    "meetingSummary": "client meet with facebook - opportunities"
-  },
-  "cf335f155c38": {
-    "eventId": "cf335f155c38",
-    "eventHash": "796bea7bfd2f713b8f3ee7dab9a965c483795cad5f37b56891d388fbe476fb44",
-    "generatedAt": "2025-09-15T14:26:16.375Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-2025-09-15-14-26-15-680Z.pdf",
-    "meetingStartTime": "2025-09-15T15:30:00.0000000Z",
-    "meetingSummary": "facebook client"
-  },
-  "4e59962c2a8e": {
-    "eventId": "4e59962c2a8e",
-    "eventHash": "71fe488bc08e7d5a30d43bf7fdd780ea69ddd981e4f444e0bf383c0eb64991d4",
-    "generatedAt": "2025-09-15T14:49:58.295Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-2025-09-15-14-49-57-639Z.pdf",
-    "meetingStartTime": "2025-09-15T16:00:00.0000000Z",
-    "meetingSummary": "facebook client"
-  },
-  "9664a9bfcff1": {
-    "eventId": "9664a9bfcff1",
-    "eventHash": "78b0ace79a19584864cec9ec057383cde584dd00ef5c2cfd5119c83355d47d9e",
-    "generatedAt": "2025-09-15T14:53:50.802Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting---4th-2025-09-15-14-53-50-117Z.pdf",
-    "meetingStartTime": "2025-09-15T15:30:00.0000000Z",
-    "meetingSummary": "facebook client meeting - 4th"
-  },
-  "468d2d918355": {
-    "eventId": "468d2d918355",
-    "eventHash": "8faaf05cf9ba19e72d6d315e0fcb4b57d3fb5fd132b03a97799592a22fbb6372",
-    "generatedAt": "2025-09-15T15:54:43.342Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting---5th-2025-09-15-15-54-41-958Z.pdf",
-    "meetingStartTime": "2025-09-15T17:00:00.0000000Z",
-    "meetingSummary": "facebook client meeting - 5th"
-  },
-  "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAesNDyAAA=": {
-    "eventId": "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAesNDyAAA=",
-    "eventHash": "8faaf05cf9ba19e72d6d315e0fcb4b57d3fb5fd132b03a97799592a22fbb6372",
-    "generatedAt": "2025-09-15T15:54:43.706Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting---5th-2025-09-15-15-54-41-958Z.pdf",
-    "meetingStartTime": "2025-09-15T17:00:00.0000000Z",
-    "meetingSummary": "facebook client meeting - 5th"
-  },
-  "88ad844d52a2": {
-    "eventId": "88ad844d52a2",
-    "eventHash": "350bd80960325ecaf5df1d0f63c5196e263238a9371fb98311abc64c7f562118",
-    "generatedAt": "2025-09-15T17:51:02.866Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting---5th-2025-09-15-17-51-01-808Z.pdf",
-    "meetingStartTime": "2025-09-15T18:30:00.0000000Z",
-    "meetingSummary": "facebook client meeting - 5th"
-  },
-  "ee8aeb92ed51": {
-    "eventId": "ee8aeb92ed51",
-    "eventHash": "8ec9f10814bb7182d72fda9759a7576f22975ed15ec59526de58c4e007e4fd6e",
-    "generatedAt": "2025-09-15T17:55:23.908Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-facebook---6th-client-2025-09-15-17-55-23-228Z.pdf",
-    "meetingStartTime": "2025-09-15T18:30:00.0000000Z",
-    "meetingSummary": "facebook - 6th client"
-  },
-  "368d7fd619bd": {
-    "eventId": "368d7fd619bd",
-    "eventHash": "3f681e70b2f48d8a2842c740411ec457afd8207e103384d13c38e7bea68a1b5b",
-    "generatedAt": "2025-09-16T05:33:25.948Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-ai-sales-assistant---team-connect-2025-09-16-05-33-25-252Z.pdf",
-    "meetingStartTime": "2025-09-16T06:30:00.0000000Z",
-    "meetingSummary": "Ai Sales Assistant - Team connect"
-  },
-  "f67d7484cbc1": {
-    "eventId": "f67d7484cbc1",
-    "eventHash": "05b49a3a580b5c5f8af804dd26e16f2fc91b7b6c031565e9a7beafc20228aec3",
-    "generatedAt": "2025-09-16T09:03:10.662Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting-2025-09-16-09-03-08-597Z.pdf",
-    "meetingStartTime": "2025-09-16T09:30:00.0000000Z",
-    "meetingSummary": "facebook client meeting"
-  },
-  "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAfXuW8AAA=": {
-    "eventId": "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAfXuW8AAA=",
-    "eventHash": "05b49a3a580b5c5f8af804dd26e16f2fc91b7b6c031565e9a7beafc20228aec3",
-    "generatedAt": "2025-09-16T09:03:12.537Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting-2025-09-16-09-03-08-597Z.pdf",
-    "meetingStartTime": "2025-09-16T09:30:00.0000000Z",
-    "meetingSummary": "facebook client meeting"
-  },
-  "ddfe3a281439": {
-    "eventId": "ddfe3a281439",
-    "eventHash": "769f0e2125f6460d7a00611973872dafa1acbcecd7e95c941f17345a9849da90",
-    "generatedAt": "2025-09-16T14:45:19.228Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting-2025-09-16-14-45-17-817Z.pdf",
-    "meetingStartTime": "2025-09-16T15:30:00.0000000Z",
-    "meetingSummary": "facebook client meeting"
-  },
-  "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAfXuW_AAA=": {
-    "eventId": "AAMkADdhYjNlMDFjLTBiNzctNDU4Yi05ZmY0LTM2M2FhMWNiMTFjOQBGAAAAAACD47utyEM_QapxDze2Uk1SBwDiMupiRLrVSb4sYtfHdVvQAAAAAAENAADiMupiRLrVSb4sYtfHdVvQAAAfXuW_AAA=",
-    "eventHash": "769f0e2125f6460d7a00611973872dafa1acbcecd7e95c941f17345a9849da90",
-    "generatedAt": "2025-09-16T14:45:20.105Z",
-    "pdfPath": "C:\\Internal Project\\Pre Call Preparation - frontend\\pre-call-preparation\\backend\\summaries\\briefing-facebook-client-meeting-2025-09-16-14-45-17-817Z.pdf",
-    "meetingStartTime": "2025-09-16T15:30:00.0000000Z",
-    "meetingSummary": "facebook client meeting"
+  "AAMkADI0OWJhNzJjLTZhNzEtNDA3MC1iMzQxLWQxMDgwNmQzYTlkNQBGAAAAAADnMJBXPF2_SoPDiITXEPJKBwDvsXFIyAuKQ5IS0lUxhFOBAAAAAAENAADvsXFIyAuKQ5IS0lUxhFOBAAAknnBQAAA=": {
+    "eventId": "AAMkADI0OWJhNzJjLTZhNzEtNDA3MC1iMzQxLWQxMDgwNmQzYTlkNQBGAAAAAADnMJBXPF2_SoPDiITXEPJKBwDvsXFIyAuKQ5IS0lUxhFOBAAAAAAENAADvsXFIyAuKQ5IS0lUxhFOBAAAknnBQAAA=",
+    "eventHash": "0f4cf8b503e40332418120cddc5978e91eedb0379f12f262bffe8061e9a9672f",
+    "generatedAt": "2025-09-25T06:56:43.129Z",
+    "pdfPath": "C:\\Users\\Thrisha Babu\\OneDrive\\Desktop\\thiru-projects\\ai-sales-assistant\\pre-call\\pre-call-preparation\\backend\\summaries\\briefing-ford-meeting-2025-09-25-06-56-40-296Z.pdf",
+    "meetingStartTime": "2025-09-25T08:00:00.0000000Z",
+    "meetingSummary": "ford meeting"
   }
 }

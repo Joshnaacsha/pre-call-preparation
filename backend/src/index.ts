@@ -336,6 +336,18 @@ app.get('/auth/callback', async (req, res) => {
   });
   
   try {
+    // Check for Azure AD specific error response
+    if (req.query.error) {
+      let errorMessage = 'Authentication failed';
+      if (req.query.error === 'access_denied') {
+        errorMessage = 'You declined to give the application the required permissions. ' +
+                      'The app needs calendar access to help prepare for your meetings.';
+      } else {
+        errorMessage = `Authentication error: ${req.query.error_description || req.query.error}`;
+      }
+      throw new Error(errorMessage);
+    }
+    
     const code = req.query.code as string;
     if (!code) {
       throw new Error('No authorization code received');
@@ -423,7 +435,17 @@ app.get('/auth/callback', async (req, res) => {
   } catch (error) {
     console.error('OAuth callback error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    res.redirect(`${process.env.FRONTEND_URL}/oauth?auth=error&message=${encodeURIComponent(errorMessage)}`);
+    const errorCode = req.query.error || 'unknown_error';
+    const errorSubcode = req.query.error_subcode || '';
+    
+    // Construct frontend URL with detailed error information
+    const redirectUrl = new URL('/oauth', process.env.FRONTEND_URL);
+    redirectUrl.searchParams.set('auth', 'error');
+    redirectUrl.searchParams.set('message', errorMessage);
+    redirectUrl.searchParams.set('error_code', errorCode as string);
+    redirectUrl.searchParams.set('error_subcode', errorSubcode as string);
+    
+    res.redirect(redirectUrl.toString());
   }
 });
 
