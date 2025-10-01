@@ -1,20 +1,4 @@
 {
-  "617bbc79c6f4": {
-    "eventId": "617bbc79c6f4",
-    "eventHash": "cb6e2c3cc8b63a7696f822e2b187601b0bd3e4b02a737a868aeffbfee3fadacc",
-    "generatedAt": "2025-09-18T06:20:41.040Z",
-    "pdfPath": "C:\\Users\\Thrisha Babu\\OneDrive\\Desktop\\thiru-projects\\ai-sales-assistant\\pre-call\\pre-call-preparation\\backend\\summaries\\briefing-nestle-meeting-2025-09-18-06-20-38-444Z.pdf",
-    "meetingStartTime": "2025-09-18T07:30:00.0000000Z",
-    "meetingSummary": "nestle meeting"
-  },
-  "AAMkADI0OWJhNzJjLTZhNzEtNDA3MC1iMzQxLWQxMDgwNmQzYTlkNQBGAAAAAADnMJBXPF2_SoPDiITXEPJKBwDvsXFIyAuKQ5IS0lUxhFOBAAAAAAENAADvsXFIyAuKQ5IS0lUxhFOBAAAggyLgAAA=": {
-    "eventId": "AAMkADI0OWJhNzJjLTZhNzEtNDA3MC1iMzQxLWQxMDgwNmQzYTlkNQBGAAAAAADnMJBXPF2_SoPDiITXEPJKBwDvsXFIyAuKQ5IS0lUxhFOBAAAAAAENAADvsXFIyAuKQ5IS0lUxhFOBAAAggyLgAAA=",
-    "eventHash": "cb6e2c3cc8b63a7696f822e2b187601b0bd3e4b02a737a868aeffbfee3fadacc",
-    "generatedAt": "2025-09-18T06:20:41.721Z",
-    "pdfPath": "C:\\Users\\Thrisha Babu\\OneDrive\\Desktop\\thiru-projects\\ai-sales-assistant\\pre-call\\pre-call-preparation\\backend\\summaries\\briefing-nestle-meeting-2025-09-18-06-20-38-444Z.pdf",
-    "meetingStartTime": "2025-09-18T07:30:00.0000000Z",
-    "meetingSummary": "nestle meeting"
-  },
   "fc11195b0db3": {
     "eventId": "fc11195b0db3",
     "eventHash": "0f4cf8b503e40332418120cddc5978e91eedb0379f12f262bffe8061e9a9672f",
@@ -30,5 +14,21 @@
     "pdfPath": "C:\\Users\\Thrisha Babu\\OneDrive\\Desktop\\thiru-projects\\ai-sales-assistant\\pre-call\\pre-call-preparation\\backend\\summaries\\briefing-ford-meeting-2025-09-25-06-56-40-296Z.pdf",
     "meetingStartTime": "2025-09-25T08:00:00.0000000Z",
     "meetingSummary": "ford meeting"
+  },
+  "8c899aaf5176": {
+    "eventId": "8c899aaf5176",
+    "eventHash": "8a74b71f3b31d1393a101852edb534426062a0b901eb5f0f3d99f5ac3518a614",
+    "generatedAt": "2025-10-01T05:34:11.981Z",
+    "pdfPath": "C:\\Users\\Thrisha Babu\\OneDrive\\Desktop\\thiru-projects\\ai-sales-assistant\\pre-call\\pre-call-preparation\\backend\\summaries\\briefing-nestle-meeting-2025-10-01-05-34-09-735Z.pdf",
+    "meetingStartTime": "2025-10-01T06:30:00.0000000Z",
+    "meetingSummary": "nestle meeting"
+  },
+  "AAMkADI0OWJhNzJjLTZhNzEtNDA3MC1iMzQxLWQxMDgwNmQzYTlkNQBGAAAAAADnMJBXPF2_SoPDiITXEPJKBwDvsXFIyAuKQ5IS0lUxhFOBAAAAAAENAADvsXFIyAuKQ5IS0lUxhFOBAAApWHLDAAA=": {
+    "eventId": "AAMkADI0OWJhNzJjLTZhNzEtNDA3MC1iMzQxLWQxMDgwNmQzYTlkNQBGAAAAAADnMJBXPF2_SoPDiITXEPJKBwDvsXFIyAuKQ5IS0lUxhFOBAAAAAAENAADvsXFIyAuKQ5IS0lUxhFOBAAApWHLDAAA=",
+    "eventHash": "8a74b71f3b31d1393a101852edb534426062a0b901eb5f0f3d99f5ac3518a614",
+    "generatedAt": "2025-10-01T05:34:12.626Z",
+    "pdfPath": "C:\\Users\\Thrisha Babu\\OneDrive\\Desktop\\thiru-projects\\ai-sales-assistant\\pre-call\\pre-call-preparation\\backend\\summaries\\briefing-nestle-meeting-2025-10-01-05-34-09-735Z.pdf",
+    "meetingStartTime": "2025-10-01T06:30:00.0000000Z",
+    "meetingSummary": "nestle meeting"
   }
 }

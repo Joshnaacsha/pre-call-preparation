@@ -12,10 +12,10 @@ import {
   getConversationState 
 } from './agents/chatAgent.js';
 import { searchPreviousMeetings } from './calendar/searchPreviousMeetings.js';
-import { prepareTavilyInputAgent } from './agents/tavilySearchAgent.js';
+import { performTavilySearch, processSearchResults, SearchResult, loadCaseStudies, findRelevantCaseStudies, prepareTavilyInputAgent } from './agents/externalSearchAgent.js';
 // Updated import: Add Hunter.io research function
 import { conductLLMResearch } from './agents/clientSearchAgent.js';
-import { generateMeetingSummary } from './agents/summaryGenarationAgent.js';
+import { generateMeetingSummary } from './agents/summaryGenerationAgent.js';
 import { generatePdfAndSendEmail } from './agents/pdfEmailAgent.js';
 import { hasPdfBeenGenerated, markPdfAsGenerated } from './calendar/listEvents.js';
 import type { GraphState, RetrievedMeeting } from './graph/graphState.js';
@@ -925,6 +925,9 @@ async function runFullResearchPipeline(initialState: GraphState, req?: any): Pro
   console.log('\nStarting full research pipeline for chat-initiated meeting...');
   console.log('='.repeat(60));
   
+  // Start by loading case studies to ensure they're available
+  await loadCaseStudies();
+  
   try {
     if (!initialState.calendarEvents || initialState.calendarEvents.length === 0) {
       console.log('No calendar events in state - pipeline aborted');
@@ -1026,6 +1029,8 @@ async function runFullResearchPipeline(initialState: GraphState, req?: any): Pro
 async function handleRagQuery(message: string, res: Response, sessionId: string = 'default'): Promise<Response> {
   console.log('🔍 Processing RAG query...');
   
+  // Ensure case studies are loaded
+  await loadCaseStudies();
   try {
     const { generateResponse } = await import('./agents/ragAgent.js');
 
@@ -1223,8 +1228,16 @@ function updatePipelineStatus(step: string, meetingName?: string, error?: string
 
 // Start the server
 const PORT = process.env.PORT || 3001;
-app.listen(parseInt(process.env.PORT || '3001'), () => {
+app.listen(parseInt(process.env.PORT || '3001'), async () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  
+  // Initialize case studies
+  try {
+    await loadCaseStudies();
+    console.log('📚 Case studies loaded successfully');
+  } catch (error) {
+    console.error('❌ Error loading case studies:', error);
+  }
   console.log(`📋 Available endpoints:`);
   console.log(`   GET  /api/health - Health check`);
   console.log(`   GET  /api/config-status - Check API configuration`);

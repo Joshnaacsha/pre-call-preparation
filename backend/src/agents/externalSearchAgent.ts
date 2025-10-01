@@ -2,8 +2,153 @@ import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import type { GraphState, RetrievedMeeting } from '../graph/graphState.js';
 import pLimit from 'p-limit';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+
+// Load case studies
+let cprimeStudies: any[] = [];
+let inryStudies: any[] = [];
+
+export async function loadCaseStudies() {
+  try {
+    // Use src/data directory directly
+    const srcDataPath = path.resolve(process.cwd(), 'src', 'data');
+    const cprimeStudiesPath = path.resolve(srcDataPath, 'case_studies_complete_final.json');
+    const inryStudiesPath = path.resolve(srcDataPath, 'inry_complete_cases.json');
+    
+    console.log('📂 Attempting to load case studies from:');
+    console.log('   - Cprime:', cprimeStudiesPath);
+    console.log('   - INRY:', inryStudiesPath);
+
+    // Check if files exist
+    try {
+      await fs.access(cprimeStudiesPath);
+      await fs.access(inryStudiesPath);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('❌ One or more case study files not found:', errorMessage);
+      console.log('🔍 Current directory:', srcDataPath);
+      throw new Error('Case study files not found');
+    }
+    
+    cprimeStudies = JSON.parse(await fs.readFile(cprimeStudiesPath, 'utf-8'));
+    inryStudies = JSON.parse(await fs.readFile(inryStudiesPath, 'utf-8'));
+    
+    console.log(`📚 Successfully loaded case studies:`);
+    console.log(`   - Cprime: ${cprimeStudies.length} studies`);
+    console.log(`   - INRY: ${inryStudies.length} studies`);
+    
+    // Log sample entries to verify content
+    if (cprimeStudies.length > 0) {
+      console.log('📄 Sample Cprime case study:', {
+        title: cprimeStudies[0].title,
+        industry: cprimeStudies[0].industry || cprimeStudies[0]['Industry/Sector'] || 'Unknown',
+        tags: cprimeStudies[0].tags?.slice(0, 3) || []
+      });
+    }
+    
+    if (inryStudies.length > 0) {
+      console.log('📄 Sample INRY case study:', {
+        title: inryStudies[0].title,
+        industry: inryStudies[0].industry_sector || inryStudies[0]['Industry/Sector'] || 'Unknown',
+        technologies: inryStudies[0].key_technologies_used?.slice(0, 3) || []
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error loading case studies:', error);
+  }
+}
+
+// Load case studies on module initialization
+loadCaseStudies();
+
+// Type definitions for sales intelligence
+export interface Message {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface CaseStudy {
+  title: string;
+  industry: string;
+  technologies: string[];
+  description: string;
+  url: string;
+  source?: string;
+  relevanceScore: number;
+  relevance_reasoning: string;
+  tags?: string[];
+}
+
+export interface KeyStakeholder {
+  name: string;
+  title: string;
+  focus_area: string;
+}
+
+export interface SalesIntelligenceReport {
+  companyName: string;
+  executiveSummary: string;
+  financialPerformance: string;
+  leadershipOrganization: string;
+  strategicInitiatives: string;
+  challengesPainPoints: string;
+  marketPosition: string;
+  salesOpportunities: string;
+  riskFactors: string;
+  keyStakeholders: KeyStakeholder[];
+  recommendedApproach: string;
+  confidenceScore: number;
+  citations: string[];
+}
 
 dotenv.config();
+
+// Helper function to extract company name from meeting summary
+function extractCompanyName(summary: string): string {
+  // Common company identifiers in meeting titles
+  const companyPatterns = [
+    /(?:meeting with|call with|discussion with)\s+([A-Z][A-Za-z0-9\s&]+?)(?:\s+team|\s+about|\s+-|$)/i,
+    /([A-Z][A-Za-z0-9\s&]+?)(?:\s+meeting|\s+call|\s+discussion|\s+-)/i,
+    /([A-Z][A-Za-z0-9\s&]+?)(?:\s+Project|\s+Initiative)/i
+  ];
+
+  for (const pattern of companyPatterns) {
+    const match = summary.match(pattern);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  // Fallback: return first capitalized word sequence
+  const fallbackMatch = summary.match(/([A-Z][A-Za-z0-9\s&]+)/);
+  return fallbackMatch ? fallbackMatch[1].trim() : summary;
+}
+
+// Generate comprehensive research queries for a company
+function generateResearchQueries(companyName: string): string[] {
+  return [
+    // Financial Deep Dive
+    `${companyName} Q3 Q4 2024 earnings revenue growth margins profit forecast`,
+    `${companyName} financial performance market position 2024`,
+    
+    // Leadership & Strategy
+    `${companyName} CEO executive leadership team changes announcements`,
+    `${companyName} strategic initiatives priorities 2024 2025`,
+    
+    // Technology & Digital
+    `${companyName} technology infrastructure cloud digital transformation`,
+    `${companyName} IT modernization software development priorities`,
+    
+    // Market Position
+    `${companyName} market share competitive position industry analysis`,
+    `${companyName} competitors comparison strengths weaknesses`,
+    
+    // Business Development
+    `${companyName} partnerships acquisitions strategic alliances`,
+    `${companyName} growth strategy expansion plans announcements`
+  ];
+}
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -74,7 +219,19 @@ export async function performTavilySearch(query: string): Promise<SearchResult[]
   }
 }
 
+// Helper function to verify case studies are loaded
+async function verifyCaseStudies(): Promise<boolean> {
+  if (cprimeStudies.length === 0 && inryStudies.length === 0) {
+    console.log('⚠️ No case studies loaded, attempting to load...');
+    await loadCaseStudies();
+  }
+  return cprimeStudies.length > 0 || inryStudies.length > 0;
+}
+
 export async function prepareTavilyInputAgent(state: GraphState): Promise<GraphState> {
+  // Verify case studies are loaded
+  await verifyCaseStudies();
+  
   // Check if calendarEvents exists and has at least one event
   if (!state.calendarEvents || state.calendarEvents.length === 0) {
     console.warn('⚠️ No calendar events found in state.');
@@ -103,67 +260,50 @@ export async function prepareTavilyInputAgent(state: GraphState): Promise<GraphS
     };
   }
 
-  // Use the full summary as the project name for better matching
+  // Extract company name from summary
   const projectName = recentEvent.summary;
+  const companyName = extractCompanyName(recentEvent.summary);
   
-  // Also try with cleaned version as fallback
-  const cleanedProjectName = recentEvent.summary.replace(/\s*\(.*?\)\s*/g, '').trim();
-
-  // Try to find previous meetings with exact match first, then cleaned version
-  let previousMeetings: RetrievedMeeting[] = 
-    state.previousMeetingsByProject?.[projectName] || 
-    state.previousMeetingsByProject?.[cleanedProjectName] || 
-    [];
+  // Generate research queries
+  const researchQueries = generateResearchQueries(companyName);
 
   // Debug logging
   console.log(`🔍 DEBUG - Project extraction:`, {
     originalSummary: recentEvent.summary,
     projectName: projectName,
-    cleanedProjectName: cleanedProjectName,
-    availableProjects: Object.keys(state.previousMeetingsByProject || {}),
-    foundPreviousMeetings: previousMeetings.length
+    companyName: companyName,
+    queriesGenerated: researchQueries.length
   });
 
-  // Create a fresh, isolated prompt with explicit context boundaries
+  // Create comprehensive research prompt
   const prompt = `
-You are an AI assistant helping a sales team prepare for external research.
-This is a NEW, INDEPENDENT request. Do not use any context from previous requests or conversations.
+You are a senior business intelligence analyst helping a sales team prepare for a client meeting.
+This is a NEW, INDEPENDENT request focused on comprehensive company research.
 
-IMPORTANT: Base your search query ONLY on the information provided below.
+COMPANY: ${companyName}
+MEETING CONTEXT: ${recentEvent.summary}
+${recentEvent.description ? `MEETING DETAILS: ${recentEvent.description}` : ''}
 
-CURRENT PROJECT: ${projectName}
-CURRENT MEETING: ${recentEvent.summary}
-
-Given ONLY the following calendar event and previous meeting notes, create a short, specific search query suitable for web search.
-
-Guidelines for search query creation:
-- If the meeting title contains "Ford", create queries about Ford Motor Company
-- If the meeting title contains "Meta", "Facebook", create queries about Meta/Facebook
-- If the meeting title contains "Google", "GCP", create queries about Google Cloud Platform
-- Focus on the actual company/technology mentioned in the meeting title
-- Include relevant technical terms from the meeting description if available
-- Keep queries concise and focused (3-8 words)
-
-Return only JSON in the format:
-{
-  "searchQuery": "..."
-}
+ANALYSIS REQUIREMENTS:
+1. Financial Performance & Health (revenue, growth, margins)
+2. Leadership & Organization (key executives, structure)
+3. Technology Infrastructure & Strategy
+4. Market Position & Competition
+5. Strategic Initiatives & Priorities
+6. Business Challenges & Opportunities
 
 Current Meeting Details:
 - Title: ${recentEvent.summary}
 - Description: ${recentEvent.description || 'No description provided.'}
 - Attendees: ${recentEvent.attendees?.join(', ') || 'No attendees listed'}
 
-Previous Meeting Notes for THIS PROJECT ONLY:
-${previousMeetings.length > 0 
-  ? previousMeetings.map((m, index) => 
-      `Meeting ${index + 1} (${m.metadata.summary}):
-      ${m.pageContent}`
-    ).join('\n\n')
-  : 'No past meetings found for this project.'
+Return a JSON object with:
+{
+  "searchQuery": "primary search query",
+  "additionalQueries": ["query1", "query2"...]
 }
 
-Remember: Create a search query that is relevant to the CURRENT project "${projectName}" only.
+Focus on information that would be valuable for enterprise sales professionals.
 `;
 
   try {
@@ -613,31 +753,140 @@ Return JSON format:
 }
 
 // Function to process search results and extract relevant information
+export async function findRelevantCaseStudies(projectName: string, results: SearchResult[]): Promise<CaseStudy[]> {
+  console.log(`🔍 Searching for relevant case studies for: ${projectName}`);
+  console.log(`📊 Available case studies:`,
+    `\n   - Cprime: ${cprimeStudies.length} studies`,
+    `\n   - INRY: ${inryStudies.length} studies`);
+  
+  // Extract key topics and technologies from search results
+  const content = results.map(r => r.content).join(' ');
+  
+  // Create prompt to analyze the content and find relevant case studies
+  const prompt = `
+Analyze the following search results about "${projectName}" and identify key industry, technologies, and challenges:
+
+${content}
+
+Extract:
+1. Industry/sector
+2. Key technologies mentioned
+3. Business challenges
+4. Digital transformation goals
+`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+    });
+
+    const analysis = completion.choices[0].message.content || '';
+    
+    // Score case studies based on relevance
+    const scoredCprimeStudies = cprimeStudies.map(study => ({
+      ...study,
+      relevanceScore: calculateRelevanceScore(study, analysis),
+      relevance_reasoning: generateRelevanceReasoning(study, analysis)
+    }));
+
+    const scoredInryStudies = inryStudies.map(study => ({
+      ...study,
+      relevanceScore: calculateRelevanceScore(study, analysis),
+      relevance_reasoning: generateRelevanceReasoning(study, analysis)
+    }));
+
+    // Combine and sort by relevance
+    const allStudies = [...scoredCprimeStudies, ...scoredInryStudies]
+      .filter(study => study.relevanceScore > 0.6)
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, 5);
+
+    return allStudies;
+  } catch (error) {
+    console.error('❌ Error finding relevant case studies:', error);
+    return [];
+  }
+}
+
+function calculateRelevanceScore(study: any, analysis: string): number {
+  const analysisLower = analysis.toLowerCase();
+  const studyContent = `${study.title} ${study.description} ${study.industry} ${(study.tags || []).join(' ')}`.toLowerCase();
+  
+  // Calculate relevance based on content overlap
+  let score = 0;
+  
+  // Industry match
+  if (study.industry && analysisLower.includes(study.industry.toLowerCase())) {
+    score += 0.3;
+  }
+  
+  // Technology match
+  const techMatches = (study.tags || []).filter((tag: string) => 
+    analysisLower.includes(tag.toLowerCase())
+  );
+  score += (techMatches.length * 0.2);
+  
+  // Challenge/solution match
+  if (study.description && 
+      analysisLower.split(' ').some(word => 
+        study.description.toLowerCase().includes(word) &&
+        word.length > 4 // Only consider significant words
+      )) {
+    score += 0.3;
+  }
+  
+  return Math.min(1, score);
+}
+
+function generateRelevanceReasoning(study: any, analysis: string): string {
+  const matches = [];
+  
+  if (study.industry) {
+    matches.push(`Same industry sector: ${study.industry}`);
+  }
+  
+  const techMatches = (study.tags || []).filter((tag: string) => 
+    analysis.toLowerCase().includes(tag.toLowerCase())
+  );
+  if (techMatches.length > 0) {
+    matches.push(`Matching technologies: ${techMatches.join(', ')}`);
+  }
+  
+  if (matches.length === 0) {
+    matches.push('Similar business challenges and transformation goals');
+  }
+  
+  return matches.join('. ');
+}
+
 export async function processSearchResults(
   results: SearchResult[], 
   projectName: string
-): Promise<{ companyNews: string; contactUpdates: string }> {
+): Promise<{ companyNews: string; contactUpdates: string; salesIntelligence: Partial<SalesIntelligenceReport> }> {
   if (results.length === 0) {
     return {
       companyNews: 'No external news found.',
       contactUpdates: 'No contact updates found.',
+      salesIntelligence: {
+        companyName: projectName,
+        confidenceScore: 0,
+        citations: []
+      }
     };
   }
 
   // Create a fresh prompt for processing results
   const prompt = `
-You are an AI assistant analyzing search results for a sales team preparing for a meeting.
-This is a NEW, INDEPENDENT analysis. Do not use context from previous analyses.
+You are a senior business intelligence analyst synthesizing research for a sales team.
+Create a comprehensive analysis from the following search results.
 
-CURRENT PROJECT: ${projectName}
+TARGET COMPANY: ${projectName}
 
-Based ONLY on the following search results, extract and summarize:
-1. Recent company news or developments relevant to the project "${projectName}"
-2. Any important updates about key contacts or stakeholders
-
-Search Results:
+ANALYZE AND STRUCTURE THE FOLLOWING INFORMATION:
 ${results.map((result, index) => 
-  `Result ${index + 1}:
+  `SOURCE ${index + 1}:
   Title: ${result.title}
   URL: ${result.url}
   Published: ${result.publishedAt || 'Unknown date'}
@@ -645,15 +894,32 @@ ${results.map((result, index) =>
   `
 ).join('\n\n')}
 
-Return only JSON in this format:
+Return a JSON object with the following structure:
 {
-  "companyNews": "Brief summary of relevant company news and developments",
-  "contactUpdates": "Brief summary of any contact or stakeholder updates"
+  "companyNews": "Latest relevant news summary",
+  "contactUpdates": "Key stakeholder/contact updates",
+  "salesIntelligence": {
+    "executiveSummary": "2-3 sentence strategic overview",
+    "financialPerformance": "Key financial metrics and trends",
+    "leadershipOrganization": "Leadership team insights",
+    "strategicInitiatives": "Major company initiatives and priorities",
+    "challengesPainPoints": "Known business challenges",
+    "marketPosition": "Competitive position analysis",
+    "salesOpportunities": "Potential sales angles",
+    "riskFactors": "Key business risks",
+    "keyStakeholders": [
+      {
+        "name": "Executive Name",
+        "title": "Role",
+        "focus_area": "Area of responsibility"
+      }
+    ],
+    "recommendedApproach": "Suggested sales strategy",
+    "confidenceScore": 0.85
+  }
 }
 
-Focus only on information relevant to "${projectName}".
-If no relevant information is found, return "No relevant [news/updates] found."
-`;
+Focus on actionable intelligence for sales teams.`;
 
   try {
     const completion = await openai.chat.completions.create({
@@ -662,18 +928,97 @@ If no relevant information is found, return "No relevant [news/updates] found."
       temperature: 0.7,
     });
 
-    const raw = completion.choices[0].message.content || '';
-    const parsed = JSON.parse(
-      raw.trim().replace(/^```json/, '').replace(/```$/, '')
-    );
+    const raw = completion.choices[0].message.content || '{}';
+    let parsed;
+    
+    // Multi-stage JSON parsing with detailed error handling
+    try {
+      // Stage 1: Try to parse the raw content directly
+      parsed = JSON.parse(raw.trim());
+      
+      // Stage 2: Validate basic structure and required fields
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Invalid JSON structure - not an object');
+      }
+      
+      // Stage 3: Check for markdown code blocks if direct parsing failed
+      if (!parsed.companyNews && !parsed.contactUpdates) {
+        const jsonMatch = raw.match(/```(?:json)?([\\s\\S]*?)```/) || raw.match(/({[\\s\\S]*})/);
+        if (jsonMatch) {
+          parsed = JSON.parse(jsonMatch[1].trim());
+        }
+      }
+      
+      // Stage 4: Validate and sanitize fields
+      parsed = {
+        companyNews: typeof parsed.companyNews === 'string' ? parsed.companyNews : 'No company news available.',
+        contactUpdates: typeof parsed.contactUpdates === 'string' ? parsed.contactUpdates : 'No contact updates available.',
+        salesIntelligence: {
+          ...(parsed.salesIntelligence || {}),
+          executiveSummary: typeof parsed.salesIntelligence?.executiveSummary === 'string' 
+            ? parsed.salesIntelligence.executiveSummary 
+            : 'Executive summary not available.',
+          financialPerformance: typeof parsed.salesIntelligence?.financialPerformance === 'string'
+            ? parsed.salesIntelligence.financialPerformance
+            : 'Financial data not available.',
+          // Ensure other required fields have defaults
+          companyName: projectName,
+          confidenceScore: typeof parsed.salesIntelligence?.confidenceScore === 'number' 
+            ? parsed.salesIntelligence.confidenceScore 
+            : 0.5,
+          citations: Array.isArray(parsed.salesIntelligence?.citations) 
+            ? parsed.salesIntelligence.citations 
+            : []
+        }
+      };
+    } catch (error) {
+      // If that fails, try to extract JSON from markdown code blocks
+      try {
+        const jsonMatch = raw.match(/```(?:json)?([\\s\\S]*?)```/) || raw.match(/({[\\s\\S]*})/);
+        if (!jsonMatch) {
+          throw new Error('Failed to extract JSON from response');
+        }
+        parsed = JSON.parse(jsonMatch[1].trim());
+      } catch (error) {
+        console.error('Failed to parse response:', error);
+        parsed = {
+          companyNews: 'Error extracting company news.',
+          contactUpdates: 'Error extracting contact updates.',
+          salesIntelligence: {
+            companyName: projectName,
+            confidenceScore: 0,
+            citations: []
+          }
+        };
+      }
+    }
 
     console.log('📊 Processed search results:');
     console.log('🏢 Company News:', parsed.companyNews?.slice(0, 100) + '...');
     console.log('👥 Contact Updates:', parsed.contactUpdates?.slice(0, 100) + '...');
 
+        // Find relevant case studies
+    const relevantCaseStudies = await findRelevantCaseStudies(projectName, results);
+    
+    // Split into Cprime and INRY case studies
+    const cprimeRelevantStudies = relevantCaseStudies.filter(study => 
+      study.source === 'Cprime' || study.source?.includes('cprime.com')
+    );
+    const inryRelevantStudies = relevantCaseStudies.filter(study => 
+      study.source === 'INRY' || study.source?.includes('inry.com')
+    );
+
     return {
       companyNews: parsed.companyNews || 'No relevant company news found.',
       contactUpdates: parsed.contactUpdates || 'No contact updates found.',
+      salesIntelligence: {
+        ...parsed.salesIntelligence,
+        companyName: projectName,
+        citations: results.map(r => r.url).filter(Boolean),
+        confidenceScore: parsed.salesIntelligence?.confidenceScore || 0.7,
+        cprimeCaseStudies: cprimeRelevantStudies,
+        inryCaseStudies: inryRelevantStudies
+      }
     };
   } catch (error) {
     console.error('❌ Error processing search results:', error);
@@ -687,6 +1032,12 @@ If no relevant information is found, return "No relevant [news/updates] found."
     return {
       companyNews: companyNews || 'No relevant company news found.',
       contactUpdates: 'No contact updates found.',
+      salesIntelligence: {
+        companyName: projectName,
+        executiveSummary: `Analysis based on ${results.length} recent sources about ${projectName}`,
+        confidenceScore: 0.5,
+        citations: results.map(r => r.url).filter(Boolean)
+      }
     };
   }
 }

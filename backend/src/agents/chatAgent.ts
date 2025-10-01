@@ -735,7 +735,7 @@ export async function handleChatRequest(
     console.log('[Success] Successfully stored meeting data');
 
     // Generate summary using the main pipeline
-    const { generateMeetingSummary } = await import('./summaryGenarationAgent.js');
+    const { generateMeetingSummary } = await import('./summaryGenerationAgent.js');
     const summaryState = await generateMeetingSummary(graphState);
     
     if (summaryState.summary) {
